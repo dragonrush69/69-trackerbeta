@@ -5781,9 +5781,11 @@ function App() {
       // Debug: log score structure so we can diagnose display issues
       const scoreKeys = Object.keys(data.scores || {});
       const firstKey  = scoreKeys[0];
-      console.log("[69Tracker] Scores loaded — keys:", scoreKeys.length, "| first key:", firstKey, "| entries:", firstKey ? (data.scores[firstKey] || []).length : 0, "| sample entry:", firstKey ? JSON.stringify((data.scores[firstKey] || [])[0]).slice(0, 200) : "none");
+      const _sampleEntry = firstKey ? (data.scores[firstKey] || [])[0] : undefined;
+      console.log("[69Tracker] Scores loaded — keys:", scoreKeys.length, "| first key:", firstKey, "| entries:", firstKey ? (data.scores[firstKey] || []).length : 0, "| sample entry:", _sampleEntry != null ? JSON.stringify(_sampleEntry).slice(0, 200) : "none");
       setDataVersion(v => v + 1); // guaranteed React state change → re-render with full data
-    }).catch(() => {
+    }).catch((err) => {
+      console.error("[69Tracker] loadFromSheets failed:", err?.message ?? err, err);
       window._appData = { players:[], scores:{}, levelRequests:[], rotationLog:[], fragmentDistributions:[], lastBackup:null, pins: window._appData?.pins || {} };
       setLoadError(true);
       setDataVersion(v => v + 1);
