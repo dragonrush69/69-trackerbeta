@@ -27,6 +27,7 @@
   <script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.23.5/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     html, body { margin: 0; padding: 0; background: #f8fafc; }
     #root { min-height: 100vh; }
@@ -44,14 +45,21 @@ const { useState, useRef, useEffect, createContext, useContext } = React;
 // The backend (AppScript_Backend.js) stores DEFAULT_PINS in A21 on first run,
 // so Sheets will always return valid PINs once it's reachable.
 
-// ─── PINS-ONLY FETCH ─────────────────────────────────────────────────────────
-// Fetches just the pins from the ?action=getPins endpoint (reads Config tab only).
-// Much faster than a full data load — used pre-login to unlock the PIN pad quickly.
-// Full data loads after login via the existing post-login init() effect.
+// ─── SUPABASE CONFIG ─────────────────────────────────────────────────────────
+const SUPABASE_URL = "https://jssybjxthkhrzxbzpslx.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impzc3lianh0aGtocnp4Ynpwc2x4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4Nzk5NTQsImV4cCI6MjEwNTQ1NTk1NH0.d5yGivZXVuiangjMgAHxSu8Qs5i7wW8jn6hSJZdgMD4";
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// Helper: upsert a single config key into the config table
+async function saveConfigKey(key, value) {
+  const { error } = await db.from("config").upsert(
+    { key, value, updated_at: new Date().toISOString() },
+    { onConflict: "key" }
+  );
+  if (error) throw new Error(error.message);
+}
 
 function getActivePins() {
-  // PINs come exclusively from Sheets data already in memory.
-  // Returns null if Sheets hasn't been loaded yet — callers must handle this.
   const sheetPins = window._appData?.pins;
   if (!sheetPins) return null;
   return {
@@ -64,48 +72,28 @@ function getActivePins() {
 }
 
 async function savePinToStorage(key, pin) {
-  // Merge the change into ALL existing pins (never lose other PINs)
   const existing = window._appData?.pins || {};
   const allPins = { ...existing, [key]: pin, pinsChangedAt: Date.now() };
   if (!window._appData) window._appData = {};
   window._appData.pins = allPins;
-
-  // Use a readable GET request so we can verify the write succeeded.
-  // (no-cors POST is fire-and-forget — we can't detect failures.)
-  if (sheetsEnabled()) {
-    try {
-      const url = SHEETS_URL
-        + "?action=savePins"
-        + "&pins=" + encodeURIComponent(JSON.stringify(allPins))
-        + "&t=" + Date.now();
-      const resp = await fetch(url);
-      const data = await resp.json();
-      if (!data.ok) throw new Error(data.error || "Server returned error");
-      console.log("PINs saved to Sheets ✓");
-    } catch (err) {
-      console.warn("PIN save to Sheets failed:", err);
-      alert("Warning: PIN change saved in memory but could not reach the server.\nOther devices won't see the change until you try again.");
-    }
+  try {
+    await saveConfigKey("pins", allPins);
+    console.log("PINs saved to Supabase ✓");
+  } catch (err) {
+    console.warn("PIN save to Supabase failed:", err);
+    alert("Warning: PIN change saved in memory but could not reach the server.\nOther devices won't see the change until you try again.");
   }
 }
 
 async function saveNormsToStorage(norms) {
   if (!window._appData) window._appData = {};
   window._appData.norms = norms;
-  if (sheetsEnabled()) {
-    try {
-      const url = SHEETS_URL
-        + "?action=saveNorms"
-        + "&norms=" + encodeURIComponent(JSON.stringify(norms))
-        + "&t=" + Date.now();
-      const resp = await fetch(url);
-      const data = await resp.json();
-      if (!data.ok) throw new Error(data.error || "Server returned error");
-      console.log("Norms saved to Sheets ✓");
-    } catch (err) {
-      console.warn("Norms save to Sheets failed:", err);
-      alert("Warning: Norms saved in memory but could not reach the server.\nOther devices won't see the change until you try again.");
-    }
+  try {
+    await saveConfigKey("norms", norms);
+    console.log("Norms saved to Supabase ✓");
+  } catch (err) {
+    console.warn("Norms save to Supabase failed:", err);
+    alert("Warning: Norms saved in memory but could not reach the server.\nOther devices won't see the change until you try again.");
   }
 }
 
@@ -117,16 +105,10 @@ async function saveAliasToStorage(clan, ctName, playerId) {
   if (window._appData.ctIgnored?.[clan]) {
     window._appData.ctIgnored[clan] = window._appData.ctIgnored[clan].filter(n => n !== ctName);
   }
-  if (sheetsEnabled()) {
-    const url = SHEETS_URL
-      + "?action=saveAlias"
-      + "&clan="     + encodeURIComponent(clan)
-      + "&ctName="   + encodeURIComponent(ctName)
-      + "&playerId=" + encodeURIComponent(playerId)
-      + "&t="        + Date.now();
-    const resp = await fetch(url);
-    const data = await resp.json();
-    if (!data.ok) throw new Error(data.error || "Server error");
+  try {
+    await saveConfigKey("ctAliases", window._appData.ctAliases);
+  } catch (err) {
+    console.warn("Alias save to Supabase failed:", err);
   }
 }
 
@@ -140,15 +122,10 @@ async function saveIgnoredToStorage(clan, ctName) {
   if (window._appData.ctAliases?.[clan]?.[ctName]) {
     delete window._appData.ctAliases[clan][ctName];
   }
-  if (sheetsEnabled()) {
-    const url = SHEETS_URL
-      + "?action=saveIgnored"
-      + "&clan="   + encodeURIComponent(clan)
-      + "&ctName=" + encodeURIComponent(ctName)
-      + "&t="      + Date.now();
-    const resp = await fetch(url);
-    const data = await resp.json();
-    if (!data.ok) throw new Error(data.error || "Server error");
+  try {
+    await saveConfigKey("ctIgnored", window._appData.ctIgnored);
+  } catch (err) {
+    console.warn("Ignored save to Supabase failed:", err);
   }
 }
 
@@ -286,28 +263,126 @@ const LoginScreen = ({ onLogin, isLoading = false }) => {
   );
 };
 
-// ─── GOOGLE SHEETS CONFIG ────────────────────────────────────────────────────
-// Paste your Apps Script Web App URL here after deploying:
-const SHEETS_URL = "https://script.google.com/macros/s/AKfycbzOocA5ZEf-_IJ-6ZlugbPsFj7penGfEk-P6kl7-1c8Ja62IR5tDRNkuDZB70rK-zES/exec";
-
-// ─── STACK CALCULATOR CONFIG ──────────────────────────────────────────────────
-// Paste the Apps Script Web App URL from your STACKING CALCULATOR spreadsheet:
+// ─── STACK CALCULATOR CONFIG ────────────────────────────────────────────
 const STACK_URL = "https://script.google.com/macros/s/AKfycbxj6Z6w-BlCvnnwvhgm_FuHBlbRXbw4tVuRrGovMhb7u0PPoNAnlWnrCF5TSAme-S6OQw/exec";
 const stackEnabled = () => STACK_URL && !STACK_URL.startsWith("YOUR_");
 
-const sheetsEnabled = () => SHEETS_URL && !SHEETS_URL.startsWith("YOUR_");
+// SHEETS_URL kept as empty string so any legacy references are inert
+const SHEETS_URL = "";
+const sheetsEnabled = () => true; // Supabase is always available in beta
+
+// ─── SUPABASE DATA LAYER ─────────────────────────────────────────────────────
+// Converts Supabase score rows into the frontend entry format:
+// { weekStart, date, syncedAt, scores:{ pid:{ field:val } } }
+function buildScoreEntries(rows, fieldMap) {
+  const entryMap = {};
+  (rows || []).forEach(r => {
+    const key = r.clan + "||" + r.week_start;
+    if (!entryMap[key]) {
+      entryMap[key] = {
+        weekStart: r.week_start,
+        date:      r.week_start + "T00:00:00.000Z",
+        syncedAt:  r.synced_at || "",
+        clan:      r.clan,
+        scores:    {},
+      };
+    }
+    const scoreObj = {};
+    Object.entries(fieldMap).forEach(([frontendKey, dbCol]) => {
+      scoreObj[frontendKey] = r[dbCol] ?? 0;
+    });
+    entryMap[key].scores[r.player_id] = scoreObj;
+  });
+  return Object.values(entryMap).sort((a, b) => a.weekStart < b.weekStart ? 1 : -1);
+}
 
 async function loadFromSheets() {
-  if (!sheetsEnabled()) return null;
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15000); // 15s timeout — abort if GAS hangs
-    const res = await fetch(SHEETS_URL + "?t=" + Date.now(), { redirect: "follow", signal: controller.signal });
-    clearTimeout(timer);
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    return await res.json();
+    const [
+      { data: players },
+      { data: configRows },
+      { data: weeklyChests },
+      { data: tinMan },
+      { data: ragnarok },
+      { data: omens },
+      { data: olympus },
+      { data: epicChests },
+      { data: levelRequests },
+      { data: rotationLog },
+      { data: fragmentDists },
+    ] = await Promise.all([
+      db.from("players").select("*"),
+      db.from("config").select("*"),
+      db.from("weekly_chests").select("*").order("week_start", { ascending: false }),
+      db.from("tin_man").select("*").order("week_start", { ascending: false }),
+      db.from("ragnarok").select("*").order("week_start", { ascending: false }),
+      db.from("omens").select("*").order("week_start", { ascending: false }),
+      db.from("olympus").select("*").order("week_start", { ascending: false }),
+      db.from("epic_chests").select("*").order("week_start", { ascending: false }),
+      db.from("level_requests").select("*").order("date", { ascending: false }),
+      db.from("rotation_log").select("*").order("date", { ascending: false }),
+      db.from("fragment_distributions").select("*").order("date", { ascending: false }),
+    ]);
+
+    // Build config map from key/value rows
+    const config = {};
+    (configRows || []).forEach(r => { config[r.key] = r.value; });
+
+    // Build scores in the format the frontend expects
+    const scores = {};
+    ["69R", "69S", "69D"].forEach(clan => {
+      const cl = rows => (rows || []).filter(r => r.clan === clan);
+      scores[clan + "_weekly_chests"] = buildScoreEntries(cl(weeklyChests), { points: "points" });
+      scores[clan + "_tin_man"]       = buildScoreEntries(cl(tinMan),       { points: "points" });
+      scores[clan + "_ragnarok"]      = buildScoreEntries(cl(ragnarok),     { points: "points" });
+      scores[clan + "_omens"]         = buildScoreEntries(cl(omens),        { essence:"essence", damage:"damage", chests:"chests" });
+      scores[clan + "_olympus"]       = buildScoreEntries(cl(olympus),      { score:"score", chests:"total_chests" });
+      scores[clan + "_epic_chests"]   = buildScoreEntries(cl(epicChests),   { score:"total_score" });
+    });
+
+    // Map players to frontend format
+    const mappedPlayers = (players || []).map(p => ({
+      id: p.id, name: p.name, clan: p.clan, active: p.active,
+      hero: p.hero, level: p.level, might: p.might,
+      G: p.rank_g, M: p.rank_m, S: p.rank_s, E: p.rank_e,
+    }));
+
+    // Map level requests to frontend format
+    const mappedLevelRequests = (levelRequests || []).map(r => ({
+      id: r.id, playerId: r.player_id, playerName: r.player_name,
+      clan: r.clan, levelType: r.level_type,
+      from: r.from_level, to: r.to_level,
+      status: r.status, date: r.date, resolvedDate: r.resolved_date,
+    }));
+
+    // Map rotation log to frontend format
+    const mappedRotationLog = (rotationLog || []).map(r => ({
+      id: r.id, playerId: r.player_id, playerName: r.player_name,
+      fromClan: r.from_clan, toClan: r.to_clan, date: r.date,
+    }));
+
+    // Map fragment distributions to frontend format
+    const mappedFragmentDists = (fragmentDists || []).map(r => ({
+      id: r.id, clan: r.clan, eventId: r.event_id, date: r.date,
+      scoreEntryDate: r.score_entry_date, totalFragments: r.total_fragments,
+      config: r.config, allocations: r.allocations,
+    }));
+
+    return {
+      players:               mappedPlayers,
+      scores,
+      levelRequests:         mappedLevelRequests,
+      rotationLog:           mappedRotationLog,
+      fragmentDistributions: mappedFragmentDists,
+      lastBackup:  config.lastBackup  || null,
+      pins:        config.pins        || {},
+      norms:       config.norms       || {},
+      ctSync:      config.ctSync      || {},
+      ctAliases:   config.ctAliases   || {},
+      ctIgnored:   config.ctIgnored   || {},
+    };
   } catch (err) {
-    console.warn("Sheets load failed:", err);
+    console.warn("Supabase load failed:", err);
     return null;
   }
 }
@@ -326,47 +401,117 @@ function showSaveToast(ok, msg) {
   setTimeout(() => { el.style.transition="opacity 0.4s"; el.style.opacity="0"; setTimeout(()=>el.remove(),400); }, ok ? 1500 : 5000);
 }
 
-async function saveToSheets(data) {
-  if (!sheetsEnabled()) return;
-  try {
-    const res = await fetch(SHEETS_URL, {
-      method: "POST",
-      redirect: "follow",
-      headers: { "Content-Type": "text/plain" },
-      body: JSON.stringify(data),
+// Convert frontend entry array → Supabase rows for upsert
+function scoreEntriesToRows(entries, clan, fieldMap) {
+  const rows = [];
+  (entries || []).forEach(entry => {
+    Object.keys(entry.scores || {}).forEach(pid => {
+      const s = entry.scores[pid] || {};
+      const row = { week_start: entry.weekStart, clan, player_id: pid, synced_at: entry.syncedAt || new Date().toISOString() };
+      Object.entries(fieldMap).forEach(([frontendKey, dbCol]) => { row[dbCol] = s[frontendKey] ?? 0; });
+      rows.push(row);
     });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const result = await res.json().catch(() => ({}));
-    if (result.error) throw new Error(result.error);
+  });
+  return rows;
+}
+
+async function saveToSheets(data) {
+  try {
+    const ops = [];
+
+    if (data.players !== undefined) {
+      const rows = data.players.map(p => ({
+        id: p.id, name: p.name, clan: p.clan, active: p.active ?? true,
+        hero: p.hero ?? null, level: p.level ?? null, might: p.might ?? null,
+        rank_g: p.G ?? null, rank_m: p.M ?? null, rank_s: p.S ?? null, rank_e: p.E ?? null,
+        updated_at: new Date().toISOString(),
+      }));
+      ops.push(db.from("players").upsert(rows, { onConflict: "id" }));
+    }
+
+    // Config keys
+    ["pins","norms","ctSync","ctAliases","ctIgnored","lastBackup"].forEach(k => {
+      if (data[k] !== undefined) ops.push(saveConfigKey(k, data[k]));
+    });
+
+    if (data.levelRequests !== undefined) {
+      const rows = data.levelRequests.map(r => ({
+        id: r.id, player_id: r.playerId, player_name: r.playerName,
+        clan: r.clan, level_type: r.levelType,
+        from_level: r.from, to_level: r.to,
+        status: r.status, date: r.date || null, resolved_date: r.resolvedDate || null,
+      }));
+      if (rows.length) ops.push(db.from("level_requests").upsert(rows, { onConflict: "id" }));
+    }
+
+    if (data.rotationLog !== undefined) {
+      const rows = data.rotationLog.map(r => ({
+        id: r.id, player_id: r.playerId, player_name: r.playerName,
+        from_clan: r.fromClan, to_clan: r.toClan, date: r.date,
+      }));
+      if (rows.length) ops.push(db.from("rotation_log").upsert(rows, { onConflict: "id" }));
+    }
+
+    if (data.fragmentDistributions !== undefined) {
+      const rows = data.fragmentDistributions.map(r => ({
+        id: r.id, clan: r.clan, event_id: r.eventId, date: r.date || null,
+        score_entry_date: r.scoreEntryDate || null, total_fragments: r.totalFragments ?? 0,
+        config: r.config ?? null, allocations: r.allocations ?? null,
+      }));
+      if (rows.length) ops.push(db.from("fragment_distributions").upsert(rows, { onConflict: "id" }));
+    }
+
+    if (data.scores) {
+      const scoreTables = {
+        weekly_chests: { fieldMap: { points:"points" } },
+        tin_man:       { fieldMap: { points:"points" } },
+        ragnarok:      { fieldMap: { points:"points" } },
+        omens:         { fieldMap: { essence:"essence", damage:"damage", chests:"chests" } },
+        olympus:       { fieldMap: { score:"score", chests:"total_chests" } },
+        epic_chests:   { fieldMap: { score:"total_score" } },
+      };
+      ["69R","69S","69D"].forEach(clan => {
+        Object.entries(scoreTables).forEach(([table, { fieldMap }]) => {
+          const key = clan + "_" + table;
+          if (data.scores[key]) {
+            const rows = scoreEntriesToRows(data.scores[key], clan, fieldMap);
+            if (rows.length) ops.push(db.from(table).upsert(rows, { onConflict: "week_start,clan,player_id" }));
+          }
+        });
+      });
+    }
+
+    const results = await Promise.all(ops);
+    const errors = results.filter(r => r && r.error).map(r => r.error.message);
+    if (errors.length) throw new Error(errors.join("; "));
     showSaveToast(true);
   } catch (err) {
-    console.warn("Sheets save failed:", err);
+    console.warn("Supabase save failed:", err);
     showSaveToast(false, err.message);
   }
 }
 
 const CLANS = ["69R", "69S", "69D"];
 
-// Trigger ChestTracker sync via Apps Script and reload app data
+// CT sync via Supabase Edge Function (no GAS / Google Sheets needed).
+// The Edge Function calls the CT API server-side and writes to Supabase.
+const EDGE_SYNC_URL = "https://jssybjxthkhrzxbzpslx.supabase.co/functions/v1/sync-epic-chests";
 async function syncFromCT() {
-  if (!sheetsEnabled()) throw new Error("Sheets not configured");
-  const res = await fetch(SHEETS_URL, {
-    method: "POST",
-    redirect: "follow",
-    headers: { "Content-Type": "text/plain" },
-    body: JSON.stringify({ action: "syncEpicChests" }),
+  const res = await fetch(EDGE_SYNC_URL, {
+    method:  "POST",
+    headers: {
+      "Content-Type":  "application/json",
+      "Authorization": "Bearer " + SUPABASE_KEY,
+    },
+    body: "{}",
   });
-  if (!res.ok) throw new Error("HTTP " + res.status);
+  if (!res.ok) throw new Error("Edge Function HTTP " + res.status);
   const result = await res.json();
   if (result.success) {
-    // Brief pause — Apps Script needs a moment after the sync POST before it
-    // will serve a fresh GET without returning 404
-    await new Promise(r => setTimeout(r, 1500));
-    // Reload fresh data so ctSync/scores update in-memory
+    // Reload data from Supabase so scores update in-memory
     const fresh = await loadFromSheets();
     if (fresh && !fresh.error) {
       window._appData = fresh;
-      // Trigger a full-tree re-render so every component picks up the new scores
       if (typeof window._refreshApp === "function") window._refreshApp();
     }
   }
@@ -4608,17 +4753,8 @@ const AdminCtSyncCard = () => {
       if (!window._appData) window._appData = {};
       if (!window._appData.ctAliases) window._appData.ctAliases = {};
       if (window._appData.ctAliases[clan]) delete window._appData.ctAliases[clan][ctName];
-      if (sheetsEnabled()) {
-        // Remove alias by saving it as empty — backend will delete it
-        const url = SHEETS_URL
-          + "?action=removeAlias"
-          + "&clan="   + encodeURIComponent(clan)
-          + "&ctName=" + encodeURIComponent(ctName)
-          + "&t="      + Date.now();
-        const resp = await fetch(url);
-        const data = await resp.json();
-        if (!data.ok) throw new Error(data.error || "Server error");
-      }
+      // Save updated ctAliases to Supabase
+      await saveConfigKey("ctAliases", window._appData.ctAliases);
       setMsg(`Alias for "${ctName}" removed — it will appear as unmatched on next sync.`);
       refresh(n => n + 1);
     } catch(e) { setMsg("Failed: " + e.message); }
@@ -4632,16 +4768,8 @@ const AdminCtSyncCard = () => {
       if (!window._appData) window._appData = {};
       if (!window._appData.ctIgnored) window._appData.ctIgnored = {};
       window._appData.ctIgnored[clan] = (window._appData.ctIgnored[clan] || []).filter(n => n !== ctName);
-      if (sheetsEnabled()) {
-        const url = SHEETS_URL
-          + "?action=saveIgnored&remove=1"
-          + "&clan="   + encodeURIComponent(clan)
-          + "&ctName=" + encodeURIComponent(ctName)
-          + "&t="      + Date.now();
-        const resp = await fetch(url);
-        const data = await resp.json();
-        if (!data.ok) throw new Error(data.error || "Server error");
-      }
+      // Save updated ctIgnored to Supabase
+      await saveConfigKey("ctIgnored", window._appData.ctIgnored);
       setMsg(`"${ctName}" un-ignored — run Sync Now to see it in the unmatched list.`);
       refresh(n => n + 1);
     } catch(e) { setMsg("Failed: " + e.message); }
@@ -5538,11 +5666,10 @@ function App() {
   window._refreshApp = forceUpdate;
 
   // Pre-load PINs quickly so the PIN pad is ready fast.
-  // Uses ?action=getPins (reads Config B2 only — much faster than a full data load).
-  // Full Sheets data loads in the background after login.
+  // Reads from Supabase config table — fast single-row fetch.
+  // Full data loads in the background after login.
   useEffect(() => {
     if (session) return;
-    if (!sheetsEnabled()) return;
     let cancelled = false;
     setPreloading(true);
     setPreloadError(false);
@@ -5550,17 +5677,13 @@ function App() {
     const loadPins = async (attempt) => {
       if (cancelled) return;
       try {
-        const res = await fetch(SHEETS_URL + "?action=getPins&t=" + Date.now(), { redirect: "follow" });
+        const { data: cfgRow, error } = await db.from("config").select("value").eq("key", "pins").single();
         if (cancelled) return;
-        if (res.ok) {
-          const data = await res.json();
-          if (cancelled) return;
-          if (data?.pins) {
-            if (!window._appData) window._appData = {};
-            window._appData.pins = data.pins;
-            setPreloading(false);
-            return;
-          }
+        if (!error && cfgRow?.value) {
+          if (!window._appData) window._appData = {};
+          window._appData.pins = cfgRow.value;
+          setPreloading(false);
+          return;
         }
       } catch (_) {}
       if (cancelled) return;
@@ -5653,6 +5776,7 @@ function App() {
           return;
         }
       }
+      setLoadError(false);
       window._appData = data;
       // Debug: log score structure so we can diagnose display issues
       const scoreKeys = Object.keys(data.scores || {});
@@ -5760,7 +5884,7 @@ function App() {
     <SessionCtx.Provider value={session}>
       {loadError && (
         <div style={{ backgroundColor:"#fef3c7", padding:"8px 16px", fontSize:12, color:"#92400e", fontWeight:600, textAlign:"center" }}>
-          ⚠️ Could not reach Google Sheets — working offline. Data will not be saved.
+          ⚠️ Could not reach Supabase — working offline. Data will not be saved.
         </div>
       )}
       <PageHeader screen={activeScreen} onLogout={handleLogout}/>
