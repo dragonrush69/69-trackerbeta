@@ -313,7 +313,7 @@ async function loadFromSheets() {
     ] = await Promise.all([
       db.from("players").select("*"),
       db.from("config").select("*"),
-      db.from("weekly_chests").select("*").order("week_start", { ascending: false }),
+      db.from("chests_weekly").select("*").order("week_start", { ascending: false }),
       db.from("tin_man").select("*").order("week_start", { ascending: false }),
       db.from("ragnarok").select("*").order("week_start", { ascending: false }),
       db.from("omens").select("*").order("week_start", { ascending: false }),
