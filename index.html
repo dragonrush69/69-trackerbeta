@@ -344,7 +344,12 @@ async function loadFromSheets() {
     const mappedPlayers = (players || []).map(p => ({
       id: p.id, name: p.name, clan: p.clan, active: p.active,
       hero: p.hero, level: p.level, might: p.might,
-      G: p.rank_g, M: p.rank_m, S: p.rank_s, E: p.rank_e,
+      levels: {
+        G: p.rank_g ? `G${p.rank_g}` : null,
+        M: p.rank_m ? `M${p.rank_m}` : null,
+        S: p.rank_s ? `S${p.rank_s}` : null,
+        E: p.rank_e ? `E${p.rank_e}` : null,
+      },
     }));
 
     // Map level requests to frontend format
@@ -423,7 +428,10 @@ async function saveToSheets(data) {
       const rows = data.players.map(p => ({
         id: p.id, name: p.name, clan: p.clan, active: p.active ?? true,
         hero: p.hero ?? null, level: p.level ?? null, might: p.might ?? null,
-        rank_g: p.G ?? null, rank_m: p.M ?? null, rank_s: p.S ?? null, rank_e: p.E ?? null,
+        rank_g: p.levels?.G ? parseInt(p.levels.G.slice(1)) : null,
+        rank_m: p.levels?.M ? parseInt(p.levels.M.slice(1)) : null,
+        rank_s: p.levels?.S ? parseInt(p.levels.S.slice(1)) : null,
+        rank_e: p.levels?.E ? parseInt(p.levels.E.slice(1)) : null,
         updated_at: new Date().toISOString(),
       }));
       ops.push(db.from("players").upsert(rows, { onConflict: "id" }));
