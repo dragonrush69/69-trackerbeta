@@ -1,0 +1,13 @@
+{
+  "name": "69tracker-tests",
+  "version": "1.0.0",
+  "description": "Unit tests for 69 Tracker",
+  "scripts": {
+    "test": "jest --verbose"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.24.0",
+    "@babel/preset-react": "^7.24.0",
+    "jest": "^29.7.0"
+  }
+}
