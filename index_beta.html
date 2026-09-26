@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "12";
+      var V = "13";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -310,6 +310,7 @@ async function loadFromSheets() {
       { data: levelRequests },
       { data: rotationLog },
       { data: fragmentDists },
+      { data: epicSquadEvents },
     ] = await Promise.all([
       db.from("players").select("*"),
       db.from("config").select("*"),
@@ -322,6 +323,7 @@ async function loadFromSheets() {
       db.from("level_requests").select("*").order("date", { ascending: false }),
       db.from("rotation_log").select("*").order("date", { ascending: false }),
       db.from("fragment_distributions").select("*").order("date", { ascending: false }),
+      db.from("epic_squad_by_event").select("chest_name, clan, player_id, total_chests"),
     ]);
 
     // Build config map from key/value rows
@@ -393,6 +395,7 @@ async function loadFromSheets() {
       ctSync:      config.ctSync      || {},
       ctAliases:   config.ctAliases   || {},
       ctIgnored:   config.ctIgnored   || {},
+      epicSquadEvents: epicSquadEvents || [],
     };
   } catch (err) {
     console.warn("Supabase load failed:", err);
@@ -2792,6 +2795,107 @@ const TierDrilldownSheet = ({ tier, clan, isAdmin, onClose }) => {
   );
 };
 
+// ─── EPIC SQUAD EVENTS CHART ──────────────────────────────────────────────────
+const CLAN_COLORS_MAP = { "69R": "#7c3aed", "69S": "#0ea5e9" };
+
+const EpicSquadChart = () => {
+  const [drilldown, setDrilldown] = useState(null); // { eventName, clan }
+  const rows = window._appData?.epicSquadEvents || [];
+  const players = window._appData?.players || [];
+  const playerMap = {};
+  players.forEach(p => { playerMap[p.id] = p.name; });
+
+  // Aggregate: { eventName -> { clan -> { total, players: [{id,name,count}] } } }
+  const byEvent = {};
+  rows.forEach(r => {
+    if (!r.chest_name || !r.clan || !r.player_id) return;
+    if (!byEvent[r.chest_name]) byEvent[r.chest_name] = {};
+    if (!byEvent[r.chest_name][r.clan]) byEvent[r.chest_name][r.clan] = { total: 0, players: [] };
+    const entry = byEvent[r.chest_name][r.clan];
+    entry.total += Number(r.total_chests) || 0;
+    entry.players.push({ id: r.player_id, name: playerMap[r.player_id] || r.player_id, count: Number(r.total_chests) || 0 });
+  });
+
+  const events = Object.keys(byEvent).sort((a, b) => {
+    const totalA = Object.values(byEvent[a]).reduce((s, v) => s + v.total, 0);
+    const totalB = Object.values(byEvent[b]).reduce((s, v) => s + v.total, 0);
+    return totalB - totalA;
+  });
+
+  if (events.length === 0) return (
+    <div style={{ backgroundColor:"#fff", borderRadius:12, padding:"14px", marginBottom:8, boxShadow:"0 1px 4px rgba(0,0,0,0.07),0 0 0 1px rgba(0,0,0,0.04)", textAlign:"center" }}>
+      <span style={{ fontSize:12, color:"#94a3b8" }}>No epic squad data yet</span>
+    </div>
+  );
+
+  const globalMax = Math.max(...events.flatMap(ev => ["69R","69S"].map(c => byEvent[ev][c]?.total || 0)));
+
+  return (
+    <div>
+      {events.map(ev => {
+        const r69 = byEvent[ev]["69R"]?.total || 0;
+        const s69 = byEvent[ev]["69S"]?.total || 0;
+        return (
+          <div key={ev} style={{ backgroundColor:"#fff", borderRadius:12, padding:"12px 14px", marginBottom:8, boxShadow:"0 1px 4px rgba(0,0,0,0.07),0 0 0 1px rgba(0,0,0,0.04)" }}>
+            <div style={{ fontSize:12, fontWeight:700, color:"#1e293b", marginBottom:10 }}>{ev}</div>
+            {["69R","69S"].map(clan => {
+              const total = byEvent[ev][clan]?.total || 0;
+              const pct = globalMax > 0 ? (total / globalMax) * 100 : 0;
+              return (
+                <div key={clan} onClick={() => setDrilldown({ eventName: ev, clan })}
+                  style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, cursor:"pointer" }}
+                  onMouseEnter={e=>e.currentTarget.style.opacity="0.75"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
+                  <span style={{ fontFamily:"'DM Mono',monospace", fontWeight:800, fontSize:11, color:CLAN_COLORS_MAP[clan]||"#475569", width:30, flexShrink:0 }}>{clan}</span>
+                  <div style={{ flex:1, height:18, backgroundColor:"#f1f5f9", borderRadius:4, overflow:"hidden" }}>
+                    <div style={{ width:`${pct}%`, height:"100%", backgroundColor:CLAN_COLORS_MAP[clan]||"#475569", borderRadius:4, transition:"width 0.3s", minWidth: total > 0 ? 4 : 0 }}/>
+                  </div>
+                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#64748b", width:50, textAlign:"right", flexShrink:0 }}>{total.toLocaleString()}</span>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+
+      {/* Drilldown sheet */}
+      {drilldown && (() => {
+        const { eventName, clan } = drilldown;
+        const clanData = byEvent[eventName]?.[clan];
+        const sorted = [...(clanData?.players || [])].sort((a,b) => b.count - a.count);
+        const clanTotal = clanData?.total || 0;
+        return (
+          <div style={{ position:"fixed", inset:0, backgroundColor:"rgba(0,0,0,0.5)", zIndex:9000, display:"flex", alignItems:"flex-end" }}
+            onClick={()=>setDrilldown(null)}>
+            <div onClick={e=>e.stopPropagation()}
+              style={{ backgroundColor:"#fff", borderRadius:"20px 20px 0 0", width:"100%", maxHeight:"75vh", overflow:"hidden", display:"flex", flexDirection:"column" }}>
+              <div style={{ padding:"16px 16px 12px", borderBottom:"1px solid #f1f5f9" }}>
+                <div style={{ width:36, height:4, backgroundColor:"#e2e8f0", borderRadius:2, margin:"0 auto 12px" }}/>
+                <div style={{ fontSize:14, fontWeight:800, color:"#1e293b" }}>{eventName}</div>
+                <div style={{ fontSize:12, color:CLAN_COLORS_MAP[clan]||"#475569", fontWeight:700, fontFamily:"'DM Mono',monospace" }}>{clan} · {clanTotal.toLocaleString()} total</div>
+              </div>
+              <div style={{ overflowY:"auto", padding:"12px 16px" }}>
+                {sorted.map((p, i) => {
+                  const pct = clanTotal > 0 ? Math.round((p.count / clanTotal) * 100) : 0;
+                  return (
+                    <div key={p.id} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
+                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#94a3b8", width:20, textAlign:"right" }}>{i+1}</span>
+                      <span style={{ fontSize:13, fontWeight:600, color:"#1e293b", flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.name}</span>
+                      <div style={{ width:80, height:14, backgroundColor:"#f1f5f9", borderRadius:3, overflow:"hidden", flexShrink:0 }}>
+                        <div style={{ width:`${pct}%`, height:"100%", backgroundColor:CLAN_COLORS_MAP[clan]||"#475569", borderRadius:3, minWidth: p.count > 0 ? 3 : 0 }}/>
+                      </div>
+                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#64748b", width:40, textAlign:"right", flexShrink:0 }}>{p.count.toLocaleString()}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+};
+
 // ─── TRENDS SCREEN ────────────────────────────────────────────────────────────
 const TrendsScreen = () => {
   const { role, clan: sessionClan } = useSession();
@@ -2957,6 +3061,12 @@ const TrendsScreen = () => {
                 })}
               </div>
             ))}
+
+            {/* Epic Squad Events */}
+            <div style={{ marginBottom:20 }}>
+              <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Epic Squad Events</div>
+              <EpicSquadChart/>
+            </div>
           </>
         );
       })()}
