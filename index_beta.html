@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "19";
+      var V = "20";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -1310,6 +1310,66 @@ const SelField = ({ value, onChange, options, placeholder }) => (
   </select>
 );
 
+const SearchableSelect = ({ value, onChange, options, placeholder = "Select…" }) => {
+  const [open, setOpen]   = useState(false);
+  const [query, setQuery] = useState("");
+  const wrapRef = React.useRef(null);
+  const inputRef = React.useRef(null);
+
+  const selected = options.find(o => String(o.value) === String(value));
+  const filtered = query.trim()
+    ? options.filter(o => o.label.toLowerCase().includes(query.toLowerCase()))
+    : options;
+
+  useEffect(() => {
+    const close = e => { if (wrapRef.current && !wrapRef.current.contains(e.target)) { setOpen(false); setQuery(""); } };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+
+  const chevron = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E\")";
+
+  return (
+    <div ref={wrapRef} style={{ position:"relative" }}>
+      <div onClick={() => { setOpen(o => !o); setTimeout(() => inputRef.current?.focus(), 0); setQuery(""); }}
+        style={{ ...inputStyle, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"space-between",
+                 backgroundImage:chevron, backgroundRepeat:"no-repeat", backgroundPosition:"right 14px center", paddingRight:36, userSelect:"none" }}>
+        <span style={{ color: selected ? "#1e293b" : "#94a3b8", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+          {selected ? selected.label : placeholder}
+        </span>
+      </div>
+      {open && (
+        <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, backgroundColor:"#fff",
+                      border:"1.5px solid #e2e8f0", borderRadius:10, boxShadow:"0 8px 24px rgba(0,0,0,0.12)", zIndex:1000 }}>
+          <div style={{ padding:"8px 8px 6px", borderBottom:"1px solid #f1f5f9" }}>
+            <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)}
+              placeholder="Search…"
+              style={{ ...inputStyle, margin:0, padding:"7px 12px", fontSize:13 }}/>
+          </div>
+          <div style={{ maxHeight:220, overflowY:"auto" }}>
+            {filtered.length === 0
+              ? <div style={{ padding:"10px 14px", fontSize:13, color:"#94a3b8" }}>No matches</div>
+              : filtered.map(o => (
+                  <div key={o.value}
+                    onMouseDown={e => { e.preventDefault(); onChange(o.value); setOpen(false); setQuery(""); }}
+                    style={{ padding:"9px 14px", cursor:"pointer", fontSize:14,
+                             color: String(o.value) === String(value) ? "#1e293b" : "#475569",
+                             fontWeight: String(o.value) === String(value) ? 700 : 400,
+                             backgroundColor: String(o.value) === String(value) ? "#f1f5f9" : "transparent",
+                             transition:"background 0.1s" }}
+                    onMouseEnter={e => { if (String(o.value) !== String(value)) e.currentTarget.style.backgroundColor="#f8fafc"; }}
+                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = String(o.value) === String(value) ? "#f1f5f9" : "transparent"; }}>
+                    {o.label}
+                  </div>
+                ))
+            }
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const Btn = ({ children, onClick, variant="secondary", size="md", fullWidth=false, disabled=false }) => {
   const variants = { primary:{backgroundColor:"#1e293b",color:"#fff"}, danger:{backgroundColor:"#dc2626",color:"#fff"}, success:{backgroundColor:"#16a34a",color:"#fff"}, ghost:{backgroundColor:"#f1f5f9",color:"#475569"} };
   const sizes    = { sm:{padding:"7px 14px",fontSize:13}, md:{padding:"10px 18px",fontSize:14}, lg:{padding:"13px 20px",fontSize:15} };
@@ -2205,12 +2265,12 @@ const EpicChestsView = ({ clan, event, onBack }) => {
                     {/* Expanded link dropdown */}
                     {isLinking && (
                       <div style={{ display:"flex", gap:6, padding:"0 12px 10px", alignItems:"center" }}>
-                        <select value={aliasMap[um.name] || ""}
-                          onChange={e => setAliasMap(prev => ({...prev, [um.name]: e.target.value}))}
-                          style={{ flex:1, padding:"6px 8px", borderRadius:7, border:"1.5px solid #e2e8f0", fontSize:12, color:"#1e293b", backgroundColor:"#fff" }}>
-                          <option value="">— pick player —</option>
-                          {players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                        </select>
+                        <div style={{ flex:1 }}>
+                          <SearchableSelect value={aliasMap[um.name] || ""}
+                            onChange={v => setAliasMap(prev => ({...prev, [um.name]: v}))}
+                            options={players.map(p => ({value:p.id, label:p.name}))}
+                            placeholder="— pick player —"/>
+                        </div>
                         <button onClick={() => handleLinkAlias(um.name)}
                           disabled={saving || !aliasMap[um.name]}
                           style={{ padding:"6px 12px", borderRadius:7, border:"none", backgroundColor: aliasMap[um.name] ? "#1e293b" : "#e2e8f0", color: aliasMap[um.name] ? "#fff" : "#94a3b8", fontSize:12, fontWeight:700, cursor: aliasMap[um.name] ? "pointer" : "not-allowed", whiteSpace:"nowrap" }}>
@@ -3413,7 +3473,7 @@ const UpdateLevelScreen = () => {
       <p style={{ fontSize:14, color:"#64748b", margin:"0 0 20px", lineHeight:1.5 }}>Select your clan and name, update any levels you need, then submit. An admin will approve your request.</p>
       <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
         <div><Label>Your Clan</Label><SelField value={clan} onChange={v=>{ setClan(v); setPlayerId(""); setNewLevels({}); setNewStats({}); }} options={CLANS.map(c=>({value:c,label:c}))} placeholder="Select your clan…"/></div>
-        {clan && <div><Label>Your Name</Label><SelField value={playerId} onChange={v=>{ setPlayerId(v); setNewLevels({}); setNewStats({}); }} options={players.map(p=>({value:p.id,label:p.name}))} placeholder="Select your name…"/></div>}
+        {clan && <div><Label>Your Name</Label><SearchableSelect value={playerId} onChange={v=>{ setPlayerId(v); setNewLevels({}); setNewStats({}); }} options={players.map(p=>({value:p.id,label:p.name}))} placeholder="Select your name…"/></div>}
         {playerId && (
           <div>
             <Label>New Levels <span style={{ textTransform:"none", fontWeight:400, color:"#94a3b8", fontSize:11 }}>(update any or all)</span></Label>
