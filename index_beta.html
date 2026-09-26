@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "15";
+      var V = "16";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -310,7 +310,6 @@ async function loadFromSheets() {
       { data: levelRequests },
       { data: rotationLog },
       { data: fragmentDists },
-      { data: epicSquadEvents },
     ] = await Promise.all([
       db.from("players").select("*"),
       db.from("config").select("*"),
@@ -323,8 +322,16 @@ async function loadFromSheets() {
       db.from("level_requests").select("*").order("date", { ascending: false }),
       db.from("rotation_log").select("*").order("date", { ascending: false }),
       db.from("fragment_distributions").select("*").order("date", { ascending: false }),
-      db.from("epic_squad_by_event").select("chest_name, clan, player_id, total_chests").limit(5000),
     ]);
+
+    // Fetch epic squad breakdown separately so a timeout can't break the main load
+    let epicSquadEvents = [];
+    try {
+      const { data: esd } = await db.from("epic_squad_by_event").select("chest_name, clan, player_id, total_chests").limit(5000);
+      epicSquadEvents = esd || [];
+    } catch (e) {
+      console.warn("epic_squad_by_event fetch failed:", e);
+    }
 
     // Build config map from key/value rows
     const config = {};
