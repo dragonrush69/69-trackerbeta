@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "14";
+      var V = "15";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -323,7 +323,7 @@ async function loadFromSheets() {
       db.from("level_requests").select("*").order("date", { ascending: false }),
       db.from("rotation_log").select("*").order("date", { ascending: false }),
       db.from("fragment_distributions").select("*").order("date", { ascending: false }),
-      db.from("epic_squad_by_event").select("chest_name, clan, player_name, total_chests").limit(5000),
+      db.from("epic_squad_by_event").select("chest_name, clan, player_id, total_chests").limit(5000),
     ]);
 
     // Build config map from key/value rows
@@ -2801,6 +2801,8 @@ const CLAN_COLORS_MAP = { "69R": "#7c3aed", "69S": "#0ea5e9" };
 const EpicSquadChart = () => {
   const [drilldown, setDrilldown] = useState(null); // { eventName, clan }
   const rows = window._appData?.epicSquadEvents || [];
+  const playerMap = {};
+  (window._appData?.players || []).forEach(p => { playerMap[p.id] = p.name; });
 
   // Aggregate: { eventName -> { clan -> { total, players: [{name,count}] } } }
   const byEvent = {};
@@ -2811,7 +2813,7 @@ const EpicSquadChart = () => {
     const entry = byEvent[r.chest_name][r.clan];
     const count = Number(r.total_chests) || 0;
     entry.total += count;
-    if (count > 0) entry.players.push({ name: r.player_name || r.player_id || "Unknown", count });
+    if (count > 0) entry.players.push({ name: playerMap[r.player_id] || r.player_id || "Unknown", count });
   });
 
   const events = Object.keys(byEvent).sort((a, b) => {
