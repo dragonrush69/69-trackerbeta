@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "8";
+      var V = "9";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -302,8 +302,7 @@ async function loadFromSheets() {
       { data: players },
       { data: configRows },
       { data: weeklyChests },
-      { data: tinMan },
-      { data: ragnarok },
+      { data: tournamentEntries },
       { data: omens },
       { data: olympus },
       { data: epicChests },
@@ -314,8 +313,7 @@ async function loadFromSheets() {
       db.from("players").select("*"),
       db.from("config").select("*"),
       db.from("chests_weekly").select("*").order("week_start", { ascending: false }),
-      db.from("tin_man").select("*").order("week_start", { ascending: false }),
-      db.from("ragnarok").select("*").order("week_start", { ascending: false }),
+      db.from("tournament_entries").select("*").order("tournament_date", { ascending: false }),
       db.from("omens").select("*").order("week_start", { ascending: false }),
       db.from("olympus").select("*").order("week_start", { ascending: false }),
       db.from("epic_chests").select("*").order("week_start", { ascending: false }),
@@ -333,8 +331,9 @@ async function loadFromSheets() {
     ["69R", "69S", "69D"].forEach(clan => {
       const cl = rows => (rows || []).filter(r => r.clan === clan);
       scores[clan + "_weekly_chests"] = buildScoreEntries(cl(weeklyChests), { points: "points" });
-      scores[clan + "_tin_man"]       = buildScoreEntries(cl(tinMan),       { points: "points" });
-      scores[clan + "_ragnarok"]      = buildScoreEntries(cl(ragnarok),     { points: "points" });
+      const tournByType = (type) => (tournamentEntries || []).filter(r => r.tournament_type === type).map(r => ({ ...r, week_start: r.tournament_date }));
+      scores[clan + "_tin_man"]       = buildScoreEntries(cl(tournByType("Rise Of The Ancients")), { points: "points" });
+      scores[clan + "_ragnarok"]      = buildScoreEntries(cl(tournByType("Ragnarok")),             { points: "points" });
       scores[clan + "_omens"]         = buildScoreEntries(cl(omens),        { essence:"essence", damage:"damage", chests:"chests" });
       scores[clan + "_olympus"]       = buildScoreEntries(cl(olympus),      { score:"score", chests:"total_chests" });
       scores[clan + "_epic_chests"]   = buildScoreEntries(cl(epicChests),   { score:"total_score" });
