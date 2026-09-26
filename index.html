@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "11";
+      var V = "19";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -324,6 +324,15 @@ async function loadFromSheets() {
       db.from("fragment_distributions").select("*").order("date", { ascending: false }),
     ]);
 
+    // Fetch epic squad breakdown separately so a timeout can't break the main load
+    let epicSquadEvents = [];
+    try {
+      const { data: esd } = await db.from("epic_squad_by_event").select("chest_name, clan, player_id, total_chests").limit(5000);
+      epicSquadEvents = esd || [];
+    } catch (e) {
+      console.warn("epic_squad_by_event fetch failed:", e);
+    }
+
     // Build config map from key/value rows
     const config = {};
     (configRows || []).forEach(r => { config[r.key] = r.value; });
@@ -393,6 +402,7 @@ async function loadFromSheets() {
       ctSync:      config.ctSync      || {},
       ctAliases:   config.ctAliases   || {},
       ctIgnored:   config.ctIgnored   || {},
+      epicSquadEvents: epicSquadEvents || [],
     };
   } catch (err) {
     console.warn("Supabase load failed:", err);
@@ -2792,6 +2802,99 @@ const TierDrilldownSheet = ({ tier, clan, isAdmin, onClose }) => {
   );
 };
 
+// ─── EPIC SQUAD EVENTS CHART ──────────────────────────────────────────────────
+// Shows per-clan horizontal bar chart, one card per clan, clickable drilldown.
+const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
+  const [drilldown, setDrilldown] = useState(null); // { eventName, clan }
+  const rows = window._appData?.epicSquadEvents || [];
+  const playerMap = {};
+  (window._appData?.players || []).forEach(p => { playerMap[p.id] = p.name; });
+
+  // Aggregate: { clan -> { eventName -> { total, players } } }
+  const byClan = {};
+  clansToShow.forEach(c => { byClan[c] = {}; });
+  rows.forEach(r => {
+    if (!r.chest_name || !r.clan || !byClan[r.clan]) return;
+    if (!byClan[r.clan][r.chest_name]) byClan[r.clan][r.chest_name] = { total: 0, players: [] };
+    const entry = byClan[r.clan][r.chest_name];
+    const count = Number(r.total_chests) || 0;
+    entry.total += count;
+    if (count > 0) entry.players.push({ name: playerMap[r.player_id] || "Unknown", count });
+  });
+
+  return (
+    <div>
+      {clansToShow.map(clan => {
+        const events = Object.entries(byClan[clan] || {}).sort((a,b) => b[1].total - a[1].total);
+        const maxVal = events[0]?.[1].total || 1;
+        return (
+          <div key={clan} style={{ backgroundColor:"#fff", borderRadius:12, padding:"12px 14px", marginBottom:8, boxShadow:"0 1px 4px rgba(0,0,0,0.07),0 0 0 1px rgba(0,0,0,0.04)" }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+              <span style={{ fontFamily:"'DM Mono',monospace", fontWeight:800, color:CLAN_COLORS[clan]||"#1e293b", fontSize:14 }}>{clan}</span>
+              <span style={{ fontSize:11, color:"#94a3b8" }}>{events.length} event{events.length!==1?"s":""}</span>
+            </div>
+            {events.length === 0 ? (
+              <div style={{ textAlign:"center", fontSize:12, color:"#94a3b8", padding:"8px 0" }}>No data yet</div>
+            ) : events.map(([name, { total }]) => {
+              const pct = (total / maxVal) * 100;
+              return (
+                <div key={name} style={{ marginBottom:8, cursor:"pointer" }}
+                  onClick={() => setDrilldown({ eventName: name, clan })}
+                  onMouseEnter={e=>e.currentTarget.style.opacity="0.75"}
+                  onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
+                  <div style={{ fontSize:11, color:"#475569", marginBottom:3, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{name}</div>
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <div style={{ flex:1, height:16, backgroundColor:"#f1f5f9", borderRadius:3, overflow:"hidden" }}>
+                      <div style={{ width:`${pct}%`, height:"100%", backgroundColor:CLAN_COLORS[clan]||"#7c3aed", borderRadius:3, minWidth:total>0?3:0 }}/>
+                    </div>
+                    <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#64748b", width:50, textAlign:"right", flexShrink:0 }}>{total.toLocaleString()}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+
+      {/* Drilldown sheet */}
+      {drilldown && (() => {
+        const { eventName, clan } = drilldown;
+        const clanData = byClan[clan]?.[eventName];
+        const sorted = [...(clanData?.players || [])].sort((a,b) => b.count - a.count);
+        const clanTotal = clanData?.total || 0;
+        return (
+          <div style={{ position:"fixed", inset:0, backgroundColor:"rgba(0,0,0,0.5)", zIndex:9000, display:"flex", alignItems:"flex-end" }}
+            onClick={()=>setDrilldown(null)}>
+            <div onClick={e=>e.stopPropagation()}
+              style={{ backgroundColor:"#fff", borderRadius:"20px 20px 0 0", width:"100%", maxHeight:"75vh", overflow:"hidden", display:"flex", flexDirection:"column" }}>
+              <div style={{ padding:"16px 16px 12px", borderBottom:"1px solid #f1f5f9" }}>
+                <div style={{ width:36, height:4, backgroundColor:"#e2e8f0", borderRadius:2, margin:"0 auto 12px" }}/>
+                <div style={{ fontSize:14, fontWeight:800, color:"#1e293b" }}>{eventName}</div>
+                <div style={{ fontSize:12, color:CLAN_COLORS[clan]||"#475569", fontWeight:700, fontFamily:"'DM Mono',monospace" }}>{clan} · {clanTotal.toLocaleString()} chests</div>
+              </div>
+              <div style={{ overflowY:"auto", padding:"12px 16px" }}>
+                {sorted.map((p, i) => {
+                  const pct = clanTotal > 0 ? Math.round((p.count / clanTotal) * 100) : 0;
+                  return (
+                    <div key={p.name + i} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
+                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#94a3b8", width:20, textAlign:"right" }}>{i+1}</span>
+                      <span style={{ fontSize:13, fontWeight:600, color:"#1e293b", flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.name}</span>
+                      <div style={{ width:80, height:14, backgroundColor:"#f1f5f9", borderRadius:3, overflow:"hidden", flexShrink:0 }}>
+                        <div style={{ width:`${pct}%`, height:"100%", backgroundColor:CLAN_COLORS[clan]||"#7c3aed", borderRadius:3, minWidth:p.count>0?3:0 }}/>
+                      </div>
+                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#64748b", width:40, textAlign:"right", flexShrink:0 }}>{p.count.toLocaleString()}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+};
+
 // ─── TRENDS SCREEN ────────────────────────────────────────────────────────────
 const TrendsScreen = () => {
   const { role, clan: sessionClan } = useSession();
@@ -2925,11 +3028,8 @@ const TrendsScreen = () => {
               })}
             </div>
 
-            {/* Trend Charts — Weekly Chests & Epic Chests */}
-            {[
-              { id:"weekly_chests", label:"Weekly Chests" },
-              { id:"epic_chests",   label:"Epic Chests"   },
-            ].map(({ id, label }) => (
+            {/* Weekly Chests trend sparkline */}
+            {[{ id:"weekly_chests", label:"Weekly Chests" }].map(({ id, label }) => (
               <div key={id} style={{ marginBottom:20 }}>
                 <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>{label}</div>
                 {clansToShow.map(c => {
@@ -2957,6 +3057,12 @@ const TrendsScreen = () => {
                 })}
               </div>
             ))}
+
+            {/* Epic Squad Events — per clan, last 3 weeks */}
+            <div style={{ marginBottom:20 }}>
+              <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Epic Squad Events · Last 3 Weeks</div>
+              <EpicSquadChart clansToShow={clansToShow}/>
+            </div>
           </>
         );
       })()}
@@ -5794,6 +5900,15 @@ function App() {
       }
       setLoadError(false);
       window._appData = data;
+      // Load epic squad events (last 3 weeks) — separate fetch so it can't block main load
+      const _essCutoff = new Date(Date.now() - 21 * 24 * 60 * 60 * 1000).toISOString();
+      db.from("epic_squad_weekly").select("chest_name, clan, player_id, total_chests").gte("week_start", _essCutoff).limit(10000)
+        .then(({ data: esd, error: esErr }) => {
+          if (esErr) console.warn("[EpicSquad] fetch error:", esErr);
+          window._appData.epicSquadEvents = esd || [];
+          setDataVersion(v => v + 1);
+        })
+        .catch(e => console.error("[EpicSquad] fetch threw:", e));
       // Debug: log score structure so we can diagnose display issues
       const scoreKeys = Object.keys(data.scores || {});
       const firstKey  = scoreKeys[0];
