@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "20";
+      var V = "21";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -2864,85 +2864,159 @@ const TierDrilldownSheet = ({ tier, clan, isAdmin, onClose }) => {
 
 // ─── EPIC SQUAD EVENTS CHART ──────────────────────────────────────────────────
 // Shows per-clan horizontal bar chart, one card per clan, clickable drilldown.
+const EPIC_PALETTE = ["#7c3aed","#2563eb","#16a34a","#d97706","#dc2626","#0891b2","#c026d3","#ea580c","#4f46e5","#059669","#be123c","#0d9488","#b45309","#1d4ed8","#15803d"];
+
 const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
-  const [drilldown, setDrilldown] = useState(null); // { eventName, clan }
-  const rows = window._appData?.epicSquadEvents || [];
+  const [drilldown, setDrilldown] = useState(null); // { week, clan, weekData, weekTotal }
+
+  const rows      = window._appData?.epicSquadEvents || [];
   const playerMap = {};
   (window._appData?.players || []).forEach(p => { playerMap[p.id] = p.name; });
 
-  // Aggregate: { clan -> { eventName -> { total, players } } }
-  const byClan = {};
-  clansToShow.forEach(c => { byClan[c] = {}; });
+  // Unique event names sorted alphabetically → consistent colour assignment
+  const allEventNames = [...new Set(rows.map(r => r.chest_name).filter(Boolean))].sort();
+  const colorMap = {};
+  allEventNames.forEach((name, i) => { colorMap[name] = EPIC_PALETTE[i % EPIC_PALETTE.length]; });
+
+  // Group: clan → week (YYYY-MM-DD) → eventName → total chests
+  const byClanWeek = {};
+  clansToShow.forEach(c => { byClanWeek[c] = {}; });
   rows.forEach(r => {
-    if (!r.chest_name || !r.clan || !byClan[r.clan]) return;
-    if (!byClan[r.clan][r.chest_name]) byClan[r.clan][r.chest_name] = { total: 0, players: [] };
-    const entry = byClan[r.clan][r.chest_name];
+    if (!r.chest_name || !r.clan || !r.week_start || !byClanWeek[r.clan]) return;
+    const week  = r.week_start.slice(0, 10);
     const count = Number(r.total_chests) || 0;
-    entry.total += count;
-    if (count > 0) entry.players.push({ name: playerMap[r.player_id] || "Unknown", count });
+    if (!byClanWeek[r.clan][week]) byClanWeek[r.clan][week] = {};
+    byClanWeek[r.clan][week][r.chest_name] = (byClanWeek[r.clan][week][r.chest_name] || 0) + count;
   });
+
+  // Also keep player-level data per clan → event for drilldown
+  const playersByClanEvent = {};
+  rows.forEach(r => {
+    if (!r.chest_name || !r.clan) return;
+    const key = `${r.clan}||${r.chest_name}`;
+    if (!playersByClanEvent[key]) playersByClanEvent[key] = {};
+    const count = Number(r.total_chests) || 0;
+    const name  = playerMap[r.player_id] || "Unknown";
+    playersByClanEvent[key][name] = (playersByClanEvent[key][name] || 0) + count;
+  });
+
+  // All weeks across all clans, oldest first
+  const allWeeks = [...new Set(rows.filter(r => r.week_start).map(r => r.week_start.slice(0,10)))].sort();
+
+  const formatWeek = w => {
+    const d = new Date(w + "T12:00:00Z");
+    return d.toLocaleDateString("en-GB", { day:"numeric", month:"short" });
+  };
+
+  if (allWeeks.length === 0) return (
+    <div style={{ textAlign:"center", padding:"20px 0", color:"#94a3b8", fontSize:13 }}>No Epic Squad data yet</div>
+  );
+
+  // Max stacked total across all clans + weeks (shared Y scale)
+  const maxTotal = Math.max(1, ...clansToShow.flatMap(clan =>
+    allWeeks.map(w => Object.values(byClanWeek[clan]?.[w] || {}).reduce((s,v) => s+v, 0))
+  ));
+
+  const BAR_H  = 110; // px height of chart area
+  const BAR_W  = 38;  // px width per bar
 
   return (
     <div>
       {clansToShow.map(clan => {
-        const events = Object.entries(byClan[clan] || {}).sort((a,b) => b[1].total - a[1].total);
-        const maxVal = events[0]?.[1].total || 1;
+        const clanWeekData = byClanWeek[clan] || {};
         return (
-          <div key={clan} style={{ backgroundColor:"#fff", borderRadius:12, padding:"12px 14px", marginBottom:8, boxShadow:"0 1px 4px rgba(0,0,0,0.07),0 0 0 1px rgba(0,0,0,0.04)" }}>
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
-              <span style={{ fontFamily:"'DM Mono',monospace", fontWeight:800, color:CLAN_COLORS[clan]||"#1e293b", fontSize:14 }}>{clan}</span>
-              <span style={{ fontSize:11, color:"#94a3b8" }}>{events.length} event{events.length!==1?"s":""}</span>
-            </div>
-            {events.length === 0 ? (
-              <div style={{ textAlign:"center", fontSize:12, color:"#94a3b8", padding:"8px 0" }}>No data yet</div>
-            ) : events.map(([name, { total }]) => {
-              const pct = (total / maxVal) * 100;
-              return (
-                <div key={name} style={{ marginBottom:8, cursor:"pointer" }}
-                  onClick={() => setDrilldown({ eventName: name, clan })}
-                  onMouseEnter={e=>e.currentTarget.style.opacity="0.75"}
-                  onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
-                  <div style={{ fontSize:11, color:"#475569", marginBottom:3, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{name}</div>
-                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                    <div style={{ flex:1, height:16, backgroundColor:"#f1f5f9", borderRadius:3, overflow:"hidden" }}>
-                      <div style={{ width:`${pct}%`, height:"100%", backgroundColor:CLAN_COLORS[clan]||"#7c3aed", borderRadius:3, minWidth:total>0?3:0 }}/>
+          <div key={clan} style={{ backgroundColor:"#fff", borderRadius:12, padding:"12px 14px 14px", marginBottom:8, boxShadow:"0 1px 4px rgba(0,0,0,0.07),0 0 0 1px rgba(0,0,0,0.04)" }}>
+            <span style={{ fontFamily:"'DM Mono',monospace", fontWeight:800, color:CLAN_COLORS[clan]||"#1e293b", fontSize:14 }}>{clan}</span>
+
+            {/* Timeline bars */}
+            <div style={{ overflowX:"auto", marginTop:10 }}>
+              <div style={{ display:"flex", gap:4, alignItems:"flex-end", minWidth: allWeeks.length * (BAR_W + 4) }}>
+                {allWeeks.map(week => {
+                  const weekData  = clanWeekData[week] || {};
+                  const weekTotal = Object.values(weekData).reduce((s,v)=>s+v, 0);
+                  const barPct    = weekTotal / maxTotal;
+                  const segments  = allEventNames
+                    .filter(n => weekData[n] > 0)
+                    .map(n => ({ name:n, count:weekData[n], color:colorMap[n], pct: weekData[n]/weekTotal*100 }));
+                  return (
+                    <div key={week} style={{ flex:`0 0 ${BAR_W}px`, display:"flex", flexDirection:"column", alignItems:"center" }}>
+                      {/* Count label */}
+                      <div style={{ fontSize:9, color:"#94a3b8", fontFamily:"'DM Mono',monospace", marginBottom:2, height:14, display:"flex", alignItems:"center" }}>
+                        {weekTotal > 0 ? weekTotal.toLocaleString() : ""}
+                      </div>
+                      {/* Bar */}
+                      <div style={{ width:BAR_W, height:BAR_H, display:"flex", flexDirection:"column", justifyContent:"flex-end", cursor: weekTotal > 0 ? "pointer":"default" }}
+                        onClick={() => weekTotal > 0 && setDrilldown({ week, clan, weekData, weekTotal })}>
+                        <div style={{ width:"100%", height:`${barPct * 100}%`, minHeight: weekTotal > 0 ? 3 : 0, borderRadius:"4px 4px 0 0", overflow:"hidden", display:"flex", flexDirection:"column-reverse" }}>
+                          {segments.map(seg => (
+                            <div key={seg.name} title={`${seg.name}: ${seg.count}`}
+                              style={{ width:"100%", flexShrink:0, height:`${seg.pct}%`, minHeight: seg.count > 0 ? 3 : 0, backgroundColor:seg.color }}/>
+                          ))}
+                        </div>
+                      </div>
+                      {/* Date label */}
+                      <div style={{ marginTop:4, fontSize:9, color:"#94a3b8", textAlign:"center", lineHeight:1.3 }}>
+                        {formatWeek(week)}
+                      </div>
                     </div>
-                    <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#64748b", width:50, textAlign:"right", flexShrink:0 }}>{total.toLocaleString()}</span>
-                  </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Legend */}
+            <div style={{ marginTop:12, display:"flex", flexWrap:"wrap", gap:"5px 12px" }}>
+              {allEventNames.map(name => (
+                <div key={name} style={{ display:"flex", alignItems:"center", gap:5 }}>
+                  <div style={{ width:10, height:10, borderRadius:2, backgroundColor:colorMap[name], flexShrink:0 }}/>
+                  <span style={{ fontSize:10, color:"#64748b" }}>{name}</span>
                 </div>
-              );
-            })}
+              ))}
+            </div>
           </div>
         );
       })}
 
-      {/* Drilldown sheet */}
+      {/* Drilldown bottom sheet — shows breakdown for tapped week */}
       {drilldown && (() => {
-        const { eventName, clan } = drilldown;
-        const clanData = byClan[clan]?.[eventName];
-        const sorted = [...(clanData?.players || [])].sort((a,b) => b.count - a.count);
-        const clanTotal = clanData?.total || 0;
+        const { week, clan, weekData, weekTotal } = drilldown;
+        const sorted = Object.entries(weekData).sort((a,b) => b[1]-a[1]);
         return (
           <div style={{ position:"fixed", inset:0, backgroundColor:"rgba(0,0,0,0.5)", zIndex:9000, display:"flex", alignItems:"flex-end" }}
-            onClick={()=>setDrilldown(null)}>
-            <div onClick={e=>e.stopPropagation()}
+            onClick={() => setDrilldown(null)}>
+            <div onClick={e => e.stopPropagation()}
               style={{ backgroundColor:"#fff", borderRadius:"20px 20px 0 0", width:"100%", maxHeight:"75vh", overflow:"hidden", display:"flex", flexDirection:"column" }}>
               <div style={{ padding:"16px 16px 12px", borderBottom:"1px solid #f1f5f9" }}>
                 <div style={{ width:36, height:4, backgroundColor:"#e2e8f0", borderRadius:2, margin:"0 auto 12px" }}/>
-                <div style={{ fontSize:14, fontWeight:800, color:"#1e293b" }}>{eventName}</div>
-                <div style={{ fontSize:12, color:CLAN_COLORS[clan]||"#475569", fontWeight:700, fontFamily:"'DM Mono',monospace" }}>{clan} · {clanTotal.toLocaleString()} chests</div>
+                <div style={{ fontSize:14, fontWeight:800, color:"#1e293b" }}>Week of {formatWeek(week)}</div>
+                <div style={{ fontSize:12, color:CLAN_COLORS[clan]||"#475569", fontWeight:700, fontFamily:"'DM Mono',monospace" }}>{clan} · {weekTotal.toLocaleString()} chests</div>
               </div>
               <div style={{ overflowY:"auto", padding:"12px 16px" }}>
-                {sorted.map((p, i) => {
-                  const pct = clanTotal > 0 ? Math.round((p.count / clanTotal) * 100) : 0;
+                {sorted.map(([name, count]) => {
+                  const pct = Math.round((count / weekTotal) * 100);
                   return (
-                    <div key={p.name + i} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
-                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#94a3b8", width:20, textAlign:"right" }}>{i+1}</span>
-                      <span style={{ fontSize:13, fontWeight:600, color:"#1e293b", flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.name}</span>
-                      <div style={{ width:80, height:14, backgroundColor:"#f1f5f9", borderRadius:3, overflow:"hidden", flexShrink:0 }}>
-                        <div style={{ width:`${pct}%`, height:"100%", backgroundColor:CLAN_COLORS[clan]||"#7c3aed", borderRadius:3, minWidth:p.count>0?3:0 }}/>
+                    <div key={name} style={{ marginBottom:12 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+                        <div style={{ width:10, height:10, borderRadius:2, backgroundColor:colorMap[name], flexShrink:0 }}/>
+                        <span style={{ fontSize:13, fontWeight:700, color:"#1e293b", flex:1 }}>{name}</span>
+                        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#64748b" }}>{count.toLocaleString()}</span>
                       </div>
-                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#64748b", width:40, textAlign:"right", flexShrink:0 }}>{p.count.toLocaleString()}</span>
+                      <div style={{ height:6, backgroundColor:"#f1f5f9", borderRadius:3, overflow:"hidden" }}>
+                        <div style={{ width:`${pct}%`, height:"100%", backgroundColor:colorMap[name], borderRadius:3 }}/>
+                      </div>
+                      {/* Top players for this event */}
+                      {(() => {
+                        const key   = `${clan}||${name}`;
+                        const pData = playersByClanEvent[key] || {};
+                        const tops  = Object.entries(pData).sort((a,b)=>b[1]-a[1]).slice(0,5);
+                        return tops.length > 0 && (
+                          <div style={{ marginTop:5, paddingLeft:18, display:"flex", flexWrap:"wrap", gap:"3px 10px" }}>
+                            {tops.map(([pName, pCount]) => (
+                              <span key={pName} style={{ fontSize:11, color:"#94a3b8" }}>{pName} <span style={{ fontFamily:"'DM Mono',monospace", color:"#64748b" }}>{pCount}</span></span>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}
@@ -5962,7 +6036,7 @@ function App() {
       window._appData = data;
       // Load epic squad events (last 3 weeks) — separate fetch so it can't block main load
       const _essCutoff = new Date(Date.now() - 21 * 24 * 60 * 60 * 1000).toISOString();
-      db.from("epic_squad_weekly").select("chest_name, clan, player_id, total_chests").gte("week_start", _essCutoff).limit(10000)
+      db.from("epic_squad_weekly").select("chest_name, clan, player_id, total_chests, week_start").gte("week_start", _essCutoff).limit(10000)
         .then(({ data: esd, error: esErr }) => {
           if (esErr) console.warn("[EpicSquad] fetch error:", esErr);
           window._appData.epicSquadEvents = esd || [];
