@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "17";
+      var V = "18";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -5912,11 +5912,14 @@ function App() {
       setLoadError(false);
       window._appData = data;
       // Load epic squad events separately so a timeout can't break the main load
+      console.log("[EpicSquad] starting separate fetch");
       db.from("epic_squad_by_event").select("chest_name, clan, player_id, total_chests").limit(5000)
-        .then(({ data: esd }) => {
+        .then(({ data: esd, error: esErr }) => {
+          console.log("[EpicSquad] fetch done — rows:", esd?.length, "error:", esErr);
           window._appData.epicSquadEvents = esd || [];
           setDataVersion(v => v + 1); // trigger re-render so EpicSquadChart sees the data
-        });
+        })
+        .catch(e => console.error("[EpicSquad] fetch threw:", e));
       // Debug: log score structure so we can diagnose display issues
       const scoreKeys = Object.keys(data.scores || {});
       const firstKey  = scoreKeys[0];
