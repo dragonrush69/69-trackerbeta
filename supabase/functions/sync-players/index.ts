@@ -1,0 +1,211 @@
+// sync-players — Supabase Edge Function
+// Pulls all clan members for 69R and 69S from ChestTracker API.
+// Uses CT memberId as the player primary key.
+// Matches existing players by name and updates their id to CT memberId.
+// Inserts new players that don't exist yet.
+//
+// Required secrets:
+//   CT_EMAIL    — ChestTracker login email
+//   CT_PASSWORD — ChestTracker login password
+
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const CT_API_BASE   = "https://api.chesttracker.com/v1";
+const CLANS_TO_SYNC = ["69R", "69S"];
+
+async function getCTToken(email: string, password: string, memberId?: string): Promise<string> {
+  const body: Record<string, string> = { email, password };
+  if (memberId) body.memberId = memberId;
+  const res = await fetch(`${CT_API_BASE}/authenticate`, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`CT auth failed (${res.status}): ${await res.text()}`);
+  const data = await res.json();
+  const token = data.authToken ?? data.token ?? data.accessToken ?? data.access_token ?? data.jwt;
+  if (!token) throw new Error(`No token in CT auth response. Keys: ${Object.keys(data).join(", ")}`);
+  return token as string;
+}
+
+async function ctGet(url: string, token: string): Promise<any> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`CT GET ${url} failed: ${res.status} ${await res.text()}`);
+    return res.json();
+  } catch (err: any) {
+    clearTimeout(timer);
+    if (err.name === "AbortError") throw new Error(`CT GET timed out after 30s: ${url}`);
+    throw err;
+  }
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, {
+      headers: {
+        "Access-Control-Allow-Origin":  "*",
+        "Access-Control-Allow-Headers": "authorization, content-type",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+      },
+    });
+  }
+
+  const corsHeaders = {
+    "Content-Type":                "application/json",
+    "Access-Control-Allow-Origin": "*",
+  };
+
+  try {
+    const email    = Deno.env.get("CT_EMAIL");
+    const password = Deno.env.get("CT_PASSWORD");
+    if (!email || !password) throw new Error("CT_EMAIL and CT_PASSWORD secrets not set.");
+
+    const db = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+
+    const baseToken = await getCTToken(email, password);
+    const nowIso    = new Date().toISOString();
+
+    // Fetch clan list and account members from CT
+    const [clansList, acctMembers] = await Promise.all([
+      ctGet(`${CT_API_BASE}/clans`,   baseToken).then((d: any) => Array.isArray(d[0]) ? d[0] : d),
+      ctGet(`${CT_API_BASE}/members`, baseToken).then((d: any) => Array.isArray(d[0]) ? d[0] : d),
+    ]);
+
+    // Build tag → clanId map
+    const tagToClanId: Record<string, string> = {};
+    clansList.forEach((c: any) => { if (c.tag && c.id) tagToClanId[c.tag] = c.id; });
+
+    // Build clanId → accountMemberId map (needed for clan-scoped token)
+    const clanIdToMemberId: Record<string, string> = {};
+    acctMembers.forEach((m: any) => { if (m.clanId && m.id) clanIdToMemberId[m.clanId] = m.id; });
+
+    const results: Record<string, any> = {};
+
+    for (const clan of CLANS_TO_SYNC) {
+      const clanId   = tagToClanId[clan];
+      const memberId = clanId ? clanIdToMemberId[clanId] : undefined;
+
+      if (!clanId || !memberId) {
+        results[clan] = { error: `No CT clanId or memberId for clan ${clan}` };
+        console.warn(`sync-players [${clan}]: skipped — no clanId/memberId`);
+        continue;
+      }
+
+      const clanToken = await getCTToken(email, password, memberId);
+
+      // Try multiple endpoints to find clan members
+      const endpoints = [
+        `${CT_API_BASE}/clans/${clanId}`,
+        `${CT_API_BASE}/members?clanId=${clanId}&size=500`,
+        `${CT_API_BASE}/players?clanId=${clanId}&size=500`,
+        `${CT_API_BASE}/clan-members?clanId=${clanId}&size=500`,
+      ];
+
+      let ctMembers: any[] = [];
+      for (const endpoint of endpoints) {
+        try {
+          const raw = await ctGet(endpoint, clanToken);
+          // Clan detail endpoint may return members nested
+          const arr = raw.members ?? raw.players ?? (Array.isArray(raw[0]) ? raw[0] : (Array.isArray(raw) ? raw : []));
+          if (arr.length > 0 && (arr[0].id || arr[0].memberId)) {
+            ctMembers = arr;
+            console.log(`sync-players [${clan}]: ${ctMembers.length} members from ${endpoint}`);
+            break;
+          }
+        } catch (err: any) {
+          console.warn(`sync-players [${clan}]: ${endpoint} failed — ${err.message}`);
+        }
+      }
+
+      console.log(`sync-players [${clan}]: total members found: ${ctMembers.length}`);
+
+      // Load existing players for this clan
+      const { data: existingPlayers, error: fetchErr } = await db
+        .from("players")
+        .select("id, name")
+        .eq("clan", clan);
+
+      if (fetchErr) throw new Error(`Failed to fetch players for ${clan}: ${fetchErr.message}`);
+
+      // Build name → existing player map (lowercase for fuzzy match)
+      const nameToPlayer = new Map<string, any>();
+      (existingPlayers || []).forEach((p: any) => {
+        nameToPlayer.set((p.name || "").toLowerCase().trim(), p);
+      });
+
+      let inserted = 0;
+      let updated  = 0;
+      let skipped  = 0;
+
+      for (const ctMember of ctMembers) {
+        const ctId   = ctMember.id   ?? ctMember.memberId ?? ctMember.userId;
+        const ctName = ctMember.name ?? ctMember.username ?? ctMember.playerName;
+
+        if (!ctId || !ctName) { skipped++; continue; }
+
+        const existing = nameToPlayer.get(ctName.toLowerCase().trim());
+
+        if (existing) {
+          if (existing.id !== ctId) {
+            console.log(`sync-players [${clan}]: fixing ${ctName} — old id=${existing.id} new id=${ctId}`);
+
+            // Step 1: insert new player record first (so FK targets exist)
+            const { error: insErr } = await db.from("players").upsert({
+              id:         ctId,
+              name:       ctName,
+              clan,
+              active:     existing.active ?? true,
+              updated_at: nowIso,
+            }, { onConflict: "id" });
+            if (insErr) { console.warn(`Could not insert new player ${ctName}: ${insErr.message}`); skipped++; continue; }
+
+            // Step 2: migrate all FK references to the new id
+            await db.from("epic_chests").update({ player_id: ctId }).eq("player_id", existing.id);
+            await db.from("chests_weekly").update({ player_id: ctId }).eq("player_id", existing.id);
+            await db.from("chests").update({ player_id: ctId }).eq("player_id", existing.id);
+
+            // Step 3: delete the old player record
+            const { error: delErr } = await db.from("players").delete().eq("id", existing.id);
+            if (delErr) { console.warn(`Could not delete old player ${ctName} (id=${existing.id}): ${delErr.message}`); }
+
+            updated++;
+          }
+          // else: id already correct, nothing to do
+        } else {
+          // New player — insert
+          const { error: insErr } = await db.from("players").insert({
+            id:         ctId,
+            name:       ctName,
+            clan,
+            active:     true,
+            updated_at: nowIso,
+          });
+          if (insErr) { console.warn(`Could not insert new player ${ctName}: ${insErr.message}`); skipped++; continue; }
+          inserted++;
+        }
+      }
+
+      results[clan] = { ctMembers: ctMembers.length, inserted, updated, skipped };
+      console.log(`sync-players [${clan}]: inserted=${inserted} updated=${updated} skipped=${skipped}`);
+    }
+
+    return new Response(JSON.stringify({ success: true, results }), { headers: corsHeaders });
+
+  } catch (err: any) {
+    console.error("sync-players error:", err.message, err.stack);
+    return new Response(
+      JSON.stringify({ success: false, error: err.message }),
+      { status: 500, headers: corsHeaders },
+    );
+  }
+});
