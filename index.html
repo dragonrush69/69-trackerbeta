@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "9";
+      var V = "10";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -331,7 +331,16 @@ async function loadFromSheets() {
     ["69R", "69S", "69D"].forEach(clan => {
       const cl = rows => (rows || []).filter(r => r.clan === clan);
       scores[clan + "_weekly_chests"] = buildScoreEntries(cl(weeklyChests), { points: "points" });
-      const tournByType = (type) => (tournamentEntries || []).filter(r => r.tournament_type === type).map(r => ({ ...r, week_start: r.tournament_date }));
+      // Build name→id map so we can resolve player_id when CT ids don't match Supabase ids
+      const nameToId = {};
+      (players || []).forEach(p => { if (p.name && p.id) nameToId[p.name.trim().toLowerCase()] = String(p.id); });
+      const tournByType = (type) => (tournamentEntries || [])
+        .filter(r => r.tournament_type === type)
+        .map(r => ({
+          ...r,
+          week_start: r.tournament_date,
+          player_id: r.player_id ?? nameToId[r.player_name?.trim().toLowerCase()] ?? r.player_name,
+        }));
       scores[clan + "_tin_man"]       = buildScoreEntries(cl(tournByType("Rise Of The Ancients")), { points: "points" });
       scores[clan + "_ragnarok"]      = buildScoreEntries(cl(tournByType("Ragnarok")),             { points: "points" });
       scores[clan + "_omens"]         = buildScoreEntries(cl(omens),        { essence:"essence", damage:"damage", chests:"chests" });
