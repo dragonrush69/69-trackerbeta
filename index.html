@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "40";
+      var V = "42";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -304,24 +304,33 @@ async function loadFromSheets() {
       { data: weeklyChests },
       { data: tinManEntries },
       { data: ragnarokEntries },
-      { data: omens },
+      { data: darkOmensEntries },
+      { data: remnantsEntries },
       { data: olympusEntries },
       { data: epicChests },
       { data: levelRequests },
       { data: rotationLog },
       { data: fragmentDists },
+      { data: arcaneChestRows },
+      { data: olympusChestRows },
     ] = await Promise.all([
       db.from("players").select("*"),
       db.from("config").select("*"),
       db.from("chests_weekly").select("*").order("week_start", { ascending: false }),
       db.from("tournament_entries").select("*").eq("tournament_type", "Rise Of The Ancients").order("tournament_date", { ascending: false }),
       db.from("tournament_entries").select("*").eq("tournament_type", "Ragnarok").order("tournament_date", { ascending: false }),
-      db.from("omens").select("*").order("week_start", { ascending: false }),
+      // Omens: essence from "Dark Omens", damage from "Remnants Of Dread" tournament scores
+      db.from("tournament_entries").select("*").eq("tournament_type", "Dark Omens").order("tournament_date", { ascending: false }),
+      db.from("tournament_entries").select("*").eq("tournament_type", "Remnants Of Dread").order("tournament_date", { ascending: false }),
       db.from("tournament_entries").select("*").eq("tournament_type", "Trials Of Olympus").order("tournament_date", { ascending: false }),
       db.from("epic_chests").select("*").order("week_start", { ascending: false }),
       db.from("level_requests").select("*").order("date", { ascending: false }),
       db.from("rotation_log").select("*").order("date", { ascending: false }),
       db.from("fragment_distributions").select("*").order("date", { ascending: false }),
+      // Omens chests: Arcane Chest from Epic Arcanomancer Squad (2 days during Omens event)
+      db.from("chests").select("player_id, clan, generated_at, quantity").eq("chest_source", "Epic Arcanomancer Squad"),
+      // Olympus chests: Chimera (Day 1) + Basilisk (Day 2) + Briareus (Day 5) — summed per player per event
+      db.from("chests").select("player_id, clan, generated_at, quantity").in("chest_source", ["Epic Chimera Squad", "Epic Basilisk squad", "Epic Briareus Squad"]),
     ]);
 
     // Fetch epic squad breakdown separately so a timeout can't break the main load
@@ -352,14 +361,61 @@ async function loadFromSheets() {
       }));
       scores[clan + "_tin_man"]       = buildScoreEntries(cl(patchTournRows(tinManEntries)),   { points: "points" });
       scores[clan + "_ragnarok"]      = buildScoreEntries(cl(patchTournRows(ragnarokEntries)), { points: "points" });
-      scores[clan + "_omens"]         = buildScoreEntries(cl(omens),        { essence:"essence", damage:"damage", chests:"chests" });
-      // Olympus from tournament_entries: points=score, meta.chests=chests (if CT provides it)
+      // ── Helper: match chestRows to event dates, build playerId lookup map
+      // key: clan+"||"+eventDate+"||"+playerId → total chest count
+      const buildEventChestMap = (chestRows, eventRows, dateField) => {
+        const eventDates = [...new Set((eventRows || []).map(r => r[dateField]))];
+        const map = {};
+        const TEN_DAYS = 10 * 24 * 3600 * 1000;
+        (chestRows || []).forEach(ch => {
+          if (!ch.player_id || !ch.generated_at) return;
+          const chTime = new Date(ch.generated_at).getTime();
+          for (const evDate of eventDates) {
+            if (Math.abs(chTime - new Date(evDate).getTime()) <= TEN_DAYS) {
+              const key = ch.clan + "||" + evDate + "||" + ch.player_id;
+              map[key] = (map[key] || 0) + (ch.quantity || 1);
+              break;
+            }
+          }
+        });
+        return map;
+      };
+
+      // ── Omens: fully automated from tournament_entries + Arcane chests
+      // Essence  = "Dark Omens" tournament points per player
+      // Damage   = "Remnants Of Dread" points, matched to nearest Dark Omens date (±5 days)
+      // Chests   = Epic Arcanomancer Squad chest count within ±10 days of Dark Omens date
+      const arcaneChestMap   = buildEventChestMap(arcaneChestRows, darkOmensEntries, "tournament_date");
+      const omensEventDates  = [...new Set((darkOmensEntries || []).map(r => r.tournament_date))];
+      const dreadLookup      = {};
+      (remnantsEntries || []).forEach(r => {
+        const pid = r.player_id ?? nameToId[r.player_name?.trim().toLowerCase()];
+        if (!pid) return;
+        const rTime = new Date(r.tournament_date).getTime();
+        for (const evDate of omensEventDates) {
+          if (Math.abs(rTime - new Date(evDate).getTime()) <= 5 * 86400000) {
+            const key = r.clan + "||" + evDate + "||" + pid;
+            dreadLookup[key] = (dreadLookup[key] || 0) + Number(r.points || 0);
+            break;
+          }
+        }
+      });
+      const patchedOmens = cl(patchTournRows(darkOmensEntries)).map(r => {
+        const key = r.clan + "||" + r.week_start + "||" + r.player_id;
+        return { ...r, essence: Number(r.points || 0), damage: dreadLookup[key] ?? 0, chests: arcaneChestMap[key] ?? 0 };
+      });
+      scores[clan + "_omens"] = buildScoreEntries(cl(patchedOmens), { essence:"essence", damage:"damage", chests:"chests" });
+
+      // Olympus: points from tournament_entries, chests from chests table
+      const olympusChestMap = buildEventChestMap(olympusChestRows, olympusEntries, "tournament_date");
       const patchedOlympus = cl(patchTournRows(olympusEntries)).map(r => ({
         ...r,
         score:  r.points ?? 0,
-        chests: r.meta?.chests ?? 0,
+        chests: olympusChestMap[r.clan + "||" + r.tournament_date + "||" + r.player_id]
+             ?? olympusChestMap[r.clan + "||" + r.week_start     + "||" + r.player_id]
+             ?? r.meta?.chests ?? 0,
       }));
-      scores[clan + "_olympus"]       = buildScoreEntries(patchedOlympus,   { score:"score", chests:"chests" });
+      scores[clan + "_olympus"] = buildScoreEntries(patchedOlympus, { score:"score", chests:"chests" });
       scores[clan + "_epic_chests"]   = buildScoreEntries(cl(epicChests),   { score:"total_score" });
     });
 
@@ -3067,7 +3123,7 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
         const filteredRuns = filterEvent
           ? allRuns.filter(r => r.dominant === filterEvent).slice(-3)
           : allRuns;
-        const maxRunTotal = Math.max(1, ...filteredRuns.map(r => r.runTotal));
+        const maxRunTotal = Math.max(1, ...filteredRuns.map(r => filterEvent ? (r.totals[filterEvent] || 0) : r.runTotal));
         return (
           <div key={clan} style={{ backgroundColor:"#fff", borderRadius:12, padding:"12px 14px 14px", marginBottom:8, boxShadow:"0 1px 4px rgba(0,0,0,0.07),0 0 0 1px rgba(0,0,0,0.04)" }}>
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
@@ -3105,17 +3161,21 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                     <div style={{ display:"flex", gap:6, alignItems:"flex-end", position:"relative", zIndex:1,
                                   minWidth: filteredRuns.length * (BAR_W + 6) }}>
                       {filteredRuns.map(run => {
-                        const barPct = run.runTotal / maxRunTotal;
+                        const displayTotal = filterEvent ? (run.totals[filterEvent] || 0) : run.runTotal;
+                        const barPct = displayTotal / maxRunTotal;
                         // Stacked segments: filter bleed (<2%), sort small→large so largest sits at bottom
-                        const segments = Object.entries(run.totals)
-                          .filter(([,v]) => v > 0 && v >= run.runTotal * 0.02)
-                          .sort((a,b) => a[1] - b[1]); // ascending = smallest at top
+                        // When a filter is active, show only the matching event segment
+                        const segments = filterEvent
+                          ? Object.entries(run.totals).filter(([name, v]) => name === filterEvent && v > 0)
+                          : Object.entries(run.totals)
+                              .filter(([,v]) => v > 0 && v >= run.runTotal * 0.02)
+                              .sort((a,b) => a[1] - b[1]); // ascending = smallest at top
                         return (
                           <div key={run.startDay} onClick={() => setDrilldown({ run, clan })}
                             style={{ flex:`0 0 ${BAR_W}px`, display:"flex", flexDirection:"column", alignItems:"center", cursor:"pointer" }}>
                             <div style={{ fontSize:9, color:"#94a3b8", fontFamily:"'DM Mono',monospace", marginBottom:2, height:14,
                                           display:"flex", alignItems:"center" }}>
-                              {run.runTotal.toLocaleString()}
+                              {displayTotal.toLocaleString()}
                             </div>
                             {/* Stacked bar */}
                             <div style={{ width:BAR_W, height:BAR_H, display:"flex", flexDirection:"column", justifyContent:"flex-end", overflow:"hidden", borderRadius:"4px 4px 0 0" }}>

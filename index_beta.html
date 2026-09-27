@@ -3123,7 +3123,7 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
         const filteredRuns = filterEvent
           ? allRuns.filter(r => r.dominant === filterEvent).slice(-3)
           : allRuns;
-        const maxRunTotal = Math.max(1, ...filteredRuns.map(r => r.runTotal));
+        const maxRunTotal = Math.max(1, ...filteredRuns.map(r => filterEvent ? (r.totals[filterEvent] || 0) : r.runTotal));
         return (
           <div key={clan} style={{ backgroundColor:"#fff", borderRadius:12, padding:"12px 14px 14px", marginBottom:8, boxShadow:"0 1px 4px rgba(0,0,0,0.07),0 0 0 1px rgba(0,0,0,0.04)" }}>
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
@@ -3161,17 +3161,21 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                     <div style={{ display:"flex", gap:6, alignItems:"flex-end", position:"relative", zIndex:1,
                                   minWidth: filteredRuns.length * (BAR_W + 6) }}>
                       {filteredRuns.map(run => {
-                        const barPct = run.runTotal / maxRunTotal;
+                        const displayTotal = filterEvent ? (run.totals[filterEvent] || 0) : run.runTotal;
+                        const barPct = displayTotal / maxRunTotal;
                         // Stacked segments: filter bleed (<2%), sort small→large so largest sits at bottom
-                        const segments = Object.entries(run.totals)
-                          .filter(([,v]) => v > 0 && v >= run.runTotal * 0.02)
-                          .sort((a,b) => a[1] - b[1]); // ascending = smallest at top
+                        // When a filter is active, show only the matching event segment
+                        const segments = filterEvent
+                          ? Object.entries(run.totals).filter(([name, v]) => name === filterEvent && v > 0)
+                          : Object.entries(run.totals)
+                              .filter(([,v]) => v > 0 && v >= run.runTotal * 0.02)
+                              .sort((a,b) => a[1] - b[1]); // ascending = smallest at top
                         return (
                           <div key={run.startDay} onClick={() => setDrilldown({ run, clan })}
                             style={{ flex:`0 0 ${BAR_W}px`, display:"flex", flexDirection:"column", alignItems:"center", cursor:"pointer" }}>
                             <div style={{ fontSize:9, color:"#94a3b8", fontFamily:"'DM Mono',monospace", marginBottom:2, height:14,
                                           display:"flex", alignItems:"center" }}>
-                              {run.runTotal.toLocaleString()}
+                              {displayTotal.toLocaleString()}
                             </div>
                             {/* Stacked bar */}
                             <div style={{ width:BAR_W, height:BAR_H, display:"flex", flexDirection:"column", justifyContent:"flex-end", overflow:"hidden", borderRadius:"4px 4px 0 0" }}>

@@ -370,6 +370,11 @@ Deno.serve(async (req) => {
     // ── Write weekly aggregates ───────────────────────────────────────────────
     await updateWeeklyTotals(db, nowIso, resetDow, resetHour);
 
+    // ── Refresh epic squad materialized views ─────────────────────────────────
+    const { error: refreshErr } = await db.rpc("refresh_epic_squad_views");
+    if (refreshErr) console.warn("sync-chests: matview refresh error:", refreshErr.message);
+    else console.log("sync-chests: epic squad views refreshed");
+
     const response = { success: true, cutoff: cutoffIso, totalUpserted, results };
     console.log("sync-chests: done —", JSON.stringify(response));
     return new Response(JSON.stringify(response), { headers: corsHeaders });
