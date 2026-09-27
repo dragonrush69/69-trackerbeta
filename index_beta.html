@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "24";
+      var V = "26";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -2867,166 +2867,211 @@ const TierDrilldownSheet = ({ tier, clan, isAdmin, onClose }) => {
 const EPIC_PALETTE = ["#7c3aed","#2563eb","#16a34a","#d97706","#dc2626","#0891b2","#c026d3","#ea580c","#4f46e5","#059669","#be123c","#0d9488","#b45309","#1d4ed8","#15803d"];
 
 const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
-  const [drilldown,   setDrilldown]   = useState(null); // { week, clan, weekData, weekTotal }
-  const [playerDrill, setPlayerDrill] = useState(null); // { playerName, clan, week, events }
+  const [drilldown,   setDrilldown]   = useState(null); // { run, clan }
+  const [playerDrill, setPlayerDrill] = useState(null); // { playerName, clan, run, events }
+  const [eventDrill,  setEventDrill]  = useState(null); // { eventName, clan }
+  const [filterEvent, setFilterEvent] = useState("");   // "" = all, or specific chest_name
 
   const rows      = window._appData?.epicSquadEvents || [];
   const playerMap = {};
   (window._appData?.players || []).forEach(p => { playerMap[p.id] = p.name; });
 
-  // Unique event names sorted alphabetically → consistent colour assignment
   const allEventNames = [...new Set(rows.map(r => r.chest_name).filter(Boolean))].sort();
   const colorMap = {};
   allEventNames.forEach((name, i) => { colorMap[name] = EPIC_PALETTE[i % EPIC_PALETTE.length]; });
 
-  // Group: clan → week (YYYY-MM-DD) → eventName → total chests
-  const byClanWeek = {};
-  clansToShow.forEach(c => { byClanWeek[c] = {}; });
+  // daily totals per clan: clan → day → event → total (all players summed)
+  const dailyTotals = {};
+  clansToShow.forEach(c => { dailyTotals[c] = {}; });
   rows.forEach(r => {
-    if (!r.chest_name || !r.clan || !r.week_start || !byClanWeek[r.clan]) return;
-    const week  = r.week_start.slice(0, 10);
+    if (!r.chest_name || !r.clan || !r.week_start || !dailyTotals[r.clan]) return;
+    const day   = r.week_start.slice(0, 10);
     const count = Number(r.total_chests) || 0;
-    if (!byClanWeek[r.clan][week]) byClanWeek[r.clan][week] = {};
-    byClanWeek[r.clan][week][r.chest_name] = (byClanWeek[r.clan][week][r.chest_name] || 0) + count;
+    if (!dailyTotals[r.clan][day]) dailyTotals[r.clan][day] = {};
+    dailyTotals[r.clan][day][r.chest_name] = (dailyTotals[r.clan][day][r.chest_name] || 0) + count;
   });
 
-  // Player-level data: clan → week → event → { playerName → count }
-  // Used for both "top players" chips in week drilldown AND per-player drilldown
-  const playersByWeekEvent = {}; // key: `clan||week||eventName` → { playerName: count }
+  // Player-level: clan||day||event → { playerName: count }
+  const playersByDayEvent = {};
   rows.forEach(r => {
     if (!r.chest_name || !r.clan || !r.week_start) return;
-    const week  = r.week_start.slice(0, 10);
-    const key   = `${r.clan}||${week}||${r.chest_name}`;
+    const day   = r.week_start.slice(0, 10);
+    const key   = `${r.clan}||${day}||${r.chest_name}`;
     const count = Number(r.total_chests) || 0;
     const name  = playerMap[r.player_id] || "Unknown";
-    if (!playersByWeekEvent[key]) playersByWeekEvent[key] = {};
-    playersByWeekEvent[key][name] = (playersByWeekEvent[key][name] || 0) + count;
+    if (!playersByDayEvent[key]) playersByDayEvent[key] = {};
+    playersByDayEvent[key][name] = (playersByDayEvent[key][name] || 0) + count;
   });
 
-  // Build per-player totals for a given clan+week: playerName → { eventName → count }
-  const getPlayerWeekData = (clan, week) => {
+  // Build event runs: consecutive epic-days with the same dominant event merged into one bar
+  const buildRuns = (clan) => {
+    const clanDays = dailyTotals[clan] || {};
+    const allDays  = Object.keys(clanDays).sort();
+    if (allDays.length === 0) return [];
+    const runs = [];
+    let current = null;
+    allDays.forEach(day => {
+      const dayData = clanDays[day] || {};
+      let maxTotal = 0, dominant = null;
+      Object.entries(dayData).forEach(([name, total]) => {
+        if (total > maxTotal) { maxTotal = total; dominant = name; }
+      });
+      if (!dominant) return;
+      if (current && current.dominant === dominant) {
+        current.endDay = day;
+        current.days.push(day);
+        Object.entries(dayData).forEach(([name, total]) => {
+          current.totals[name] = (current.totals[name] || 0) + total;
+          current.runTotal += total;
+        });
+      } else {
+        current = { dominant, startDay:day, endDay:day, days:[day], totals:{...dayData},
+                    runTotal: Object.values(dayData).reduce((s,v)=>s+v, 0) };
+        runs.push(current);
+      }
+    });
+    return runs;
+  };
+
+  const formatDay = d => new Date(d + "T12:00:00Z").toLocaleDateString("en-GB", { day:"numeric", month:"short" });
+  const formatRun = run => run.startDay === run.endDay
+    ? formatDay(run.startDay)
+    : `${formatDay(run.startDay).replace(/ \w+$/, "")}–${formatDay(run.endDay)}`;
+
+  const getRunPlayerData = (clan, run) => {
     const result = {};
-    allEventNames.forEach(eventName => {
-      const key = `${clan}||${week}||${eventName}`;
-      const pd  = playersByWeekEvent[key] || {};
-      Object.entries(pd).forEach(([pName, count]) => {
-        if (!result[pName]) result[pName] = {};
-        result[pName][eventName] = (result[pName][eventName] || 0) + count;
+    run.days.forEach(day => {
+      allEventNames.forEach(eventName => {
+        Object.entries(playersByDayEvent[`${clan}||${day}||${eventName}`] || {}).forEach(([pName, count]) => {
+          if (!result[pName]) result[pName] = {};
+          result[pName][eventName] = (result[pName][eventName] || 0) + count;
+        });
       });
     });
-    return result; // { playerName: { eventName: count } }
+    return result;
   };
 
-  // All weeks across all clans, oldest first
-  const allWeeks = [...new Set(rows.filter(r => r.week_start).map(r => r.week_start.slice(0,10)))].sort();
+  const BAR_H = 110;
+  const BAR_W = 44;
 
-  const formatWeek = w => {
-    const d = new Date(w + "T12:00:00Z");
-    return d.toLocaleDateString("en-GB", { day:"numeric", month:"short" });
-  };
-
-  if (allWeeks.length === 0) return (
+  if (rows.length === 0) return (
     <div style={{ textAlign:"center", padding:"20px 0", color:"#94a3b8", fontSize:13 }}>No Epic Squad data yet</div>
   );
 
-  // Max stacked total across all clans + weeks (shared Y scale)
-  const maxTotal = Math.max(1, ...clansToShow.flatMap(clan =>
-    allWeeks.map(w => Object.values(byClanWeek[clan]?.[w] || {}).reduce((s,v) => s+v, 0))
-  ));
-
-  const BAR_H  = 110; // px height of chart area
-  const BAR_W  = 38;  // px width per bar
-
   return (
     <div>
+      {/* Event filter pills */}
+      <div style={{ display:"flex", flexWrap:"wrap", gap:"5px 8px", marginBottom:12 }}>
+        <button onClick={() => setFilterEvent("")}
+          style={{ padding:"4px 12px", borderRadius:20, border:"1.5px solid", fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"'Outfit',system-ui,sans-serif",
+                   borderColor: filterEvent===""?"#1e293b":"#e2e8f0", backgroundColor: filterEvent===""?"#1e293b":"#fff", color: filterEvent===""?"#fff":"#64748b" }}>
+          All events
+        </button>
+        {allEventNames.map(name => (
+          <button key={name} onClick={() => setFilterEvent(filterEvent===name?"":name)}
+            style={{ padding:"4px 12px", borderRadius:20, border:"1.5px solid", fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"'Outfit',system-ui,sans-serif",
+                     borderColor: filterEvent===name?colorMap[name]:"#e2e8f0",
+                     backgroundColor: filterEvent===name?colorMap[name]:"#fff",
+                     color: filterEvent===name?"#fff":"#64748b" }}>
+            {name}
+          </button>
+        ))}
+      </div>
+
       {clansToShow.map(clan => {
-        const clanWeekData = byClanWeek[clan] || {};
+        let allRuns = buildRuns(clan);
+        const filteredRuns = filterEvent
+          ? allRuns.filter(r => r.dominant === filterEvent).slice(-3)
+          : allRuns;
+        const maxRunTotal = Math.max(1, ...filteredRuns.map(r => r.runTotal));
         return (
           <div key={clan} style={{ backgroundColor:"#fff", borderRadius:12, padding:"12px 14px 14px", marginBottom:8, boxShadow:"0 1px 4px rgba(0,0,0,0.07),0 0 0 1px rgba(0,0,0,0.04)" }}>
-            <span style={{ fontFamily:"'DM Mono',monospace", fontWeight:800, color:CLAN_COLORS[clan]||"#1e293b", fontSize:14 }}>{clan}</span>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+              <span style={{ fontFamily:"'DM Mono',monospace", fontWeight:800, color:CLAN_COLORS[clan]||"#1e293b", fontSize:14 }}>{clan}</span>
+              {filterEvent && <span style={{ fontSize:11, color:"#94a3b8" }}>Last {filteredRuns.length} run{filteredRuns.length!==1?"s":""}</span>}
+            </div>
 
-            {/* Timeline bars */}
-            <div style={{ overflowX:"auto", marginTop:10 }}>
-              <div style={{ display:"flex", gap:4, alignItems:"flex-end", minWidth: allWeeks.length * (BAR_W + 4) }}>
-                {allWeeks.map(week => {
-                  const weekData  = clanWeekData[week] || {};
-                  const weekTotal = Object.values(weekData).reduce((s,v)=>s+v, 0);
-                  const barPct    = weekTotal / maxTotal;
-                  const segments  = allEventNames
-                    .filter(n => weekData[n] > 0)
-                    .map(n => ({ name:n, count:weekData[n], color:colorMap[n], pct: weekData[n]/weekTotal*100 }));
-                  return (
-                    <div key={week}
-                      onClick={() => weekTotal > 0 && setDrilldown({ week, clan, weekData, weekTotal })}
-                      style={{ flex:`0 0 ${BAR_W}px`, display:"flex", flexDirection:"column", alignItems:"center", cursor: weekTotal > 0 ? "pointer" : "default" }}>
-                      {/* Count label */}
-                      <div style={{ fontSize:9, color:"#94a3b8", fontFamily:"'DM Mono',monospace", marginBottom:2, height:14, display:"flex", alignItems:"center" }}>
-                        {weekTotal > 0 ? weekTotal.toLocaleString() : ""}
-                      </div>
-                      {/* Bar */}
-                      <div style={{ width:BAR_W, height:BAR_H, display:"flex", flexDirection:"column", justifyContent:"flex-end" }}>
-                        <div style={{ width:"100%", height:`${barPct * 100}%`, minHeight: weekTotal > 0 ? 3 : 0, borderRadius:"4px 4px 0 0", overflow:"hidden", display:"flex", flexDirection:"column-reverse" }}>
-                          {segments.map(seg => (
-                            <div key={seg.name} title={`${seg.name}: ${seg.count}`}
-                              style={{ width:"100%", flexShrink:0, height:`${seg.pct}%`, minHeight: seg.count > 0 ? 3 : 0, backgroundColor:seg.color }}/>
-                          ))}
+            {filteredRuns.length === 0 ? (
+              <div style={{ textAlign:"center", fontSize:12, color:"#94a3b8", padding:"8px 0" }}>No data</div>
+            ) : (
+              <>
+                <div style={{ overflowX:"auto" }}>
+                  <div style={{ display:"flex", gap:6, alignItems:"flex-end", minWidth: filteredRuns.length * (BAR_W + 6) }}>
+                    {filteredRuns.map(run => {
+                      const barPct = run.runTotal / maxRunTotal;
+                      const color  = colorMap[run.dominant] || "#94a3b8";
+                      return (
+                        <div key={run.startDay} onClick={() => setDrilldown({ run, clan })}
+                          style={{ flex:`0 0 ${BAR_W}px`, display:"flex", flexDirection:"column", alignItems:"center", cursor:"pointer" }}>
+                          <div style={{ fontSize:9, color:"#94a3b8", fontFamily:"'DM Mono',monospace", marginBottom:2, height:14, display:"flex", alignItems:"center" }}>
+                            {run.runTotal.toLocaleString()}
+                          </div>
+                          <div style={{ width:BAR_W, height:BAR_H, display:"flex", flexDirection:"column", justifyContent:"flex-end" }}>
+                            <div style={{ width:"100%", height:`${barPct*100}%`, minHeight:3, borderRadius:"4px 4px 0 0", backgroundColor:color }}/>
+                          </div>
+                          <div style={{ marginTop:4, fontSize:9, textAlign:"center", lineHeight:1.3, color:"#475569", fontWeight:700 }}>
+                            {formatRun(run)}
+                          </div>
                         </div>
-                      </div>
-                      {/* Date label — tappable, underlined when there's data */}
-                      <div onClick={() => weekTotal > 0 && setDrilldown({ week, clan, weekData, weekTotal })}
-                        style={{ marginTop:4, fontSize:9, textAlign:"center", lineHeight:1.3,
-                                  color: weekTotal > 0 ? "#475569" : "#94a3b8",
-                                  fontWeight: weekTotal > 0 ? 700 : 400,
-                                  textDecoration: weekTotal > 0 ? "underline" : "none",
-                                  textDecorationColor:"#cbd5e1",
-                                  cursor: weekTotal > 0 ? "pointer" : "default",
-                                  padding:"2px 0 4px" }}>
-                        {formatWeek(week)}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Legend */}
-            <div style={{ marginTop:12, display:"flex", flexWrap:"wrap", gap:"5px 12px" }}>
-              {allEventNames.map(name => (
-                <div key={name} style={{ display:"flex", alignItems:"center", gap:5 }}>
-                  <div style={{ width:10, height:10, borderRadius:2, backgroundColor:colorMap[name], flexShrink:0 }}/>
-                  <span style={{ fontSize:10, color:"#64748b" }}>{name}</span>
+                      );
+                    })}
+                  </div>
                 </div>
-              ))}
-            </div>
+
+                {/* Legend (tap to see all dates + players for that event) */}
+                {!filterEvent && (
+                  <div style={{ marginTop:12, display:"flex", flexWrap:"wrap", gap:"5px 10px" }}>
+                    {allEventNames.map(name => (
+                      <button key={name} onClick={() => setEventDrill({ eventName:name, clan })}
+                        style={{ display:"flex", alignItems:"center", gap:5, background:"#f8fafc", border:"1px solid #e2e8f0", borderRadius:7, padding:"3px 8px 3px 6px", cursor:"pointer", fontFamily:"'Outfit',system-ui,sans-serif" }}>
+                        <div style={{ width:10, height:10, borderRadius:2, backgroundColor:colorMap[name], flexShrink:0 }}/>
+                        <span style={{ fontSize:10, color:"#475569", fontWeight:600 }}>{name}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
           </div>
         );
       })}
 
-      {/* Week drilldown — per-event breakdown, players tappable */}
+      {/* Run drilldown */}
       {drilldown && !playerDrill && (() => {
-        const { week, clan, weekData, weekTotal } = drilldown;
-        const sorted      = Object.entries(weekData).sort((a,b) => b[1]-a[1]);
-        const playerWeek  = getPlayerWeekData(clan, week);
+        const { run, clan } = drilldown;
+        const color     = colorMap[run.dominant] || "#94a3b8";
+        const runPlayerData = getRunPlayerData(clan, run);
+        const sortedEvents  = Object.entries(run.totals).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
         return (
           <div style={{ position:"fixed", inset:0, backgroundColor:"rgba(0,0,0,0.5)", zIndex:9000, display:"flex", alignItems:"flex-end" }}
-            onMouseDown={e => { if (e.target === e.currentTarget) setDrilldown(null); }}>
+            onMouseDown={e => { if (e.target===e.currentTarget) setDrilldown(null); }}>
             <div onMouseDown={e => e.stopPropagation()}
               style={{ backgroundColor:"#fff", borderRadius:"20px 20px 0 0", width:"100%", maxHeight:"78vh", overflow:"hidden", display:"flex", flexDirection:"column" }}>
               <div style={{ padding:"16px 16px 12px", borderBottom:"1px solid #f1f5f9" }}>
                 <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between" }}>
-                  <div>
-                    <div style={{ fontSize:14, fontWeight:800, color:"#1e293b" }}>Week of {formatWeek(week)}</div>
-                    <div style={{ fontSize:12, color:CLAN_COLORS[clan]||"#475569", fontWeight:700, fontFamily:"'DM Mono',monospace", marginTop:2 }}>{clan} · {weekTotal.toLocaleString()} chests</div>
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <div style={{ width:14, height:14, borderRadius:3, backgroundColor:color, flexShrink:0, marginTop:1 }}/>
+                    <div>
+                      <div style={{ fontSize:14, fontWeight:800, color:"#1e293b" }}>{run.dominant}</div>
+                      <div style={{ fontSize:12, color:CLAN_COLORS[clan]||"#475569", fontWeight:700, fontFamily:"'DM Mono',monospace", marginTop:2 }}>
+                        {clan} · {formatRun(run)} · {run.runTotal.toLocaleString()} chests
+                      </div>
+                    </div>
                   </div>
                   <button onClick={() => setDrilldown(null)}
                     style={{ background:"none", border:"1px solid #e2e8f0", borderRadius:8, width:32, height:32, cursor:"pointer", fontSize:16, color:"#94a3b8", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>✕</button>
                 </div>
               </div>
               <div style={{ overflowY:"auto", padding:"12px 16px" }}>
-                {sorted.map(([eventName, count]) => {
-                  const pct  = Math.round((count / weekTotal) * 100);
-                  const key  = `${clan}||${week}||${eventName}`;
-                  const tops = Object.entries(playersByWeekEvent[key] || {}).sort((a,b) => b[1]-a[1]).slice(0, 8);
+                {sortedEvents.map(([eventName, count]) => {
+                  const pct = Math.round((count / run.runTotal) * 100);
+                  const eventPlayers = {};
+                  run.days.forEach(day => {
+                    Object.entries(playersByDayEvent[`${clan}||${day}||${eventName}`] || {}).forEach(([pName, c]) => {
+                      eventPlayers[pName] = (eventPlayers[pName] || 0) + c;
+                    });
+                  });
+                  const tops = Object.entries(eventPlayers).sort((a,b)=>b[1]-a[1]).slice(0,8);
                   return (
                     <div key={eventName} style={{ marginBottom:14 }}>
                       <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
@@ -3037,12 +3082,11 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                       <div style={{ height:6, backgroundColor:"#f1f5f9", borderRadius:3, overflow:"hidden", marginBottom:6 }}>
                         <div style={{ width:`${pct}%`, height:"100%", backgroundColor:colorMap[eventName], borderRadius:3 }}/>
                       </div>
-                      {/* Tappable player chips */}
                       {tops.length > 0 && (
                         <div style={{ paddingLeft:18, display:"flex", flexWrap:"wrap", gap:"4px 8px" }}>
                           {tops.map(([pName, pCount]) => (
                             <button key={pName}
-                              onClick={() => setPlayerDrill({ playerName:pName, clan, week, events: playerWeek[pName] || {} })}
+                              onClick={() => setPlayerDrill({ playerName:pName, clan, run, events: runPlayerData[pName]||{} })}
                               style={{ background:"#f8fafc", border:"1px solid #e2e8f0", borderRadius:6, padding:"2px 8px", cursor:"pointer", fontSize:11, color:"#475569", fontFamily:"'Outfit',system-ui,sans-serif", display:"flex", alignItems:"center", gap:4 }}>
                               <span style={{ fontWeight:600 }}>{pName}</span>
                               <span style={{ fontFamily:"'DM Mono',monospace", color:"#94a3b8" }}>{pCount}</span>
@@ -3059,14 +3103,14 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
         );
       })()}
 
-      {/* Player drilldown — all events for this player this week */}
+      {/* Player drilldown */}
       {playerDrill && (() => {
-        const { playerName, clan, week, events } = playerDrill;
+        const { playerName, clan, run, events } = playerDrill;
         const playerTotal = Object.values(events).reduce((s,v)=>s+v, 0);
         const sorted      = Object.entries(events).sort((a,b)=>b[1]-a[1]);
         return (
           <div style={{ position:"fixed", inset:0, backgroundColor:"rgba(0,0,0,0.5)", zIndex:9100, display:"flex", alignItems:"flex-end" }}
-            onMouseDown={e => { if (e.target === e.currentTarget) setPlayerDrill(null); }}>
+            onMouseDown={e => { if (e.target===e.currentTarget) setPlayerDrill(null); }}>
             <div onMouseDown={e => e.stopPropagation()}
               style={{ backgroundColor:"#fff", borderRadius:"20px 20px 0 0", width:"100%", maxHeight:"78vh", overflow:"hidden", display:"flex", flexDirection:"column" }}>
               <div style={{ padding:"16px 16px 12px", borderBottom:"1px solid #f1f5f9" }}>
@@ -3074,11 +3118,11 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                   <div>
                     <button onClick={() => setPlayerDrill(null)}
                       style={{ background:"none", border:"none", color:"#64748b", fontSize:12, cursor:"pointer", padding:0, marginBottom:6, display:"flex", alignItems:"center", gap:4 }}>
-                      ← Back to week
+                      ← Back to event
                     </button>
                     <div style={{ fontSize:15, fontWeight:800, color:"#1e293b" }}>{playerName}</div>
                     <div style={{ fontSize:12, color:CLAN_COLORS[clan]||"#475569", fontWeight:700, fontFamily:"'DM Mono',monospace", marginTop:2 }}>
-                      {clan} · Week of {formatWeek(week)} · {playerTotal.toLocaleString()} chests
+                      {clan} · {run?formatRun(run):""} · {playerTotal.toLocaleString()} chests
                     </div>
                   </div>
                   <button onClick={() => { setPlayerDrill(null); setDrilldown(null); }}
@@ -3087,7 +3131,7 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
               </div>
               <div style={{ overflowY:"auto", padding:"12px 16px" }}>
                 {sorted.map(([eventName, count]) => {
-                  const pct = playerTotal > 0 ? Math.round((count / playerTotal) * 100) : 0;
+                  const pct = playerTotal>0?Math.round((count/playerTotal)*100):0;
                   return (
                     <div key={eventName} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
                       <div style={{ width:10, height:10, borderRadius:2, backgroundColor:colorMap[eventName]||"#94a3b8", flexShrink:0 }}/>
@@ -3098,6 +3142,81 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                         </div>
                       </div>
                       <span style={{ fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:700, color:"#1e293b", flexShrink:0 }}>{count.toLocaleString()}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Event legend drilldown */}
+      {eventDrill && (() => {
+        const { eventName, clan } = eventDrill;
+        const color   = colorMap[eventName] || "#94a3b8";
+        const allRuns = buildRuns(clan).filter(r => r.dominant === eventName);
+        const allPlayers = {};
+        allRuns.forEach(run => {
+          run.days.forEach(day => {
+            Object.entries(playersByDayEvent[`${clan}||${day}||${eventName}`] || {}).forEach(([pName, count]) => {
+              allPlayers[pName] = (allPlayers[pName] || 0) + count;
+            });
+          });
+        });
+        const sortedPlayers = Object.entries(allPlayers).sort((a,b)=>b[1]-a[1]);
+        const eventTotal    = sortedPlayers.reduce((s,[,v])=>s+v, 0);
+        const maxP          = sortedPlayers[0]?.[1] || 1;
+        return (
+          <div style={{ position:"fixed", inset:0, backgroundColor:"rgba(0,0,0,0.5)", zIndex:9200, display:"flex", alignItems:"flex-end" }}
+            onMouseDown={e => { if (e.target===e.currentTarget) setEventDrill(null); }}>
+            <div onMouseDown={e => e.stopPropagation()}
+              style={{ backgroundColor:"#fff", borderRadius:"20px 20px 0 0", width:"100%", maxHeight:"82vh", overflow:"hidden", display:"flex", flexDirection:"column" }}>
+              <div style={{ padding:"16px 16px 12px", borderBottom:"1px solid #f1f5f9" }}>
+                <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <div style={{ width:14, height:14, borderRadius:3, backgroundColor:color, flexShrink:0, marginTop:1 }}/>
+                    <div>
+                      <div style={{ fontSize:14, fontWeight:800, color:"#1e293b" }}>{eventName}</div>
+                      <div style={{ fontSize:12, color:CLAN_COLORS[clan]||"#475569", fontWeight:700, fontFamily:"'DM Mono',monospace", marginTop:1 }}>
+                        {clan} · {eventTotal.toLocaleString()} chests across {allRuns.length} run{allRuns.length!==1?"s":""}
+                      </div>
+                    </div>
+                  </div>
+                  <button onClick={() => setEventDrill(null)}
+                    style={{ background:"none", border:"1px solid #e2e8f0", borderRadius:8, width:32, height:32, cursor:"pointer", fontSize:16, color:"#94a3b8", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>✕</button>
+                </div>
+              </div>
+              <div style={{ overflowY:"auto", padding:"12px 16px" }}>
+                {allRuns.length > 0 && (
+                  <div style={{ marginBottom:16 }}>
+                    <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:8 }}>By Event Run</div>
+                    {[...allRuns].reverse().map(run => {
+                      const runAmt = run.totals[eventName] || 0;
+                      const pct    = Math.round((runAmt/(allRuns[0]?.totals[eventName]||1))*100);
+                      return (
+                        <div key={run.startDay} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
+                          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#64748b", width:72, flexShrink:0 }}>{formatRun(run)}</span>
+                          <div style={{ flex:1, height:8, backgroundColor:"#f1f5f9", borderRadius:4, overflow:"hidden" }}>
+                            <div style={{ width:`${pct}%`, height:"100%", backgroundColor:color, borderRadius:4 }}/>
+                          </div>
+                          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#64748b", width:46, textAlign:"right", flexShrink:0 }}>{runAmt.toLocaleString()}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:8 }}>All Players</div>
+                {sortedPlayers.map(([pName, pTotal], i) => {
+                  const pct = Math.round((pTotal/maxP)*100);
+                  return (
+                    <div key={pName} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
+                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#94a3b8", width:18, textAlign:"right", flexShrink:0 }}>{i+1}</span>
+                      <span style={{ fontSize:13, fontWeight:600, color:"#1e293b", width:110, flexShrink:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{pName}</span>
+                      <div style={{ flex:1, height:8, backgroundColor:"#f1f5f9", borderRadius:4, overflow:"hidden" }}>
+                        <div style={{ width:`${pct}%`, height:"100%", backgroundColor:color, borderRadius:4 }}/>
+                      </div>
+                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#64748b", width:46, textAlign:"right", flexShrink:0 }}>{pTotal.toLocaleString()}</span>
                     </div>
                   );
                 })}
@@ -3275,7 +3394,7 @@ const TrendsScreen = () => {
 
             {/* Epic Squad Events — per clan, last 3 weeks */}
             <div style={{ marginBottom:20 }}>
-              <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Epic Squad Events · Last 3 Weeks</div>
+              <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Epic Squad Events · Last 18 Days</div>
               <EpicSquadChart clansToShow={clansToShow}/>
             </div>
           </>
@@ -6116,7 +6235,7 @@ function App() {
       setLoadError(false);
       window._appData = data;
       // Load epic squad events (last 3 weeks) — separate fetch so it can't block main load
-      const _essCutoff = new Date(Date.now() - 21 * 24 * 60 * 60 * 1000).toISOString();
+      const _essCutoff = new Date(Date.now() - 18 * 24 * 60 * 60 * 1000).toISOString();
       db.from("epic_squad_weekly").select("chest_name, clan, player_id, total_chests, week_start").gte("week_start", _essCutoff).limit(10000)
         .then(({ data: esd, error: esErr }) => {
           if (esErr) console.warn("[EpicSquad] fetch error:", esErr);
