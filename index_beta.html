@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "27";
+      var V = "28";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -2944,6 +2944,13 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
     return runs;
   };
 
+  // Shorten chest_source labels: "Epic Undead Squad" → "Undead", "Arachne's Swarm Epic Squad" → "Arachne's Swarm"
+  const fmtEvent = name => name
+    .replace(/\s+Epic\s+Squad\s*$/i, "")   // drop trailing "Epic Squad"
+    .replace(/^Epic\s+/i, "")              // drop leading "Epic "
+    .replace(/\s+Squad\s*$/i, "")          // drop trailing " Squad"
+    .trim();
+
   const formatDay = d => new Date(d + "T12:00:00Z").toLocaleDateString("en-GB", { day:"numeric", month:"short" });
   const formatRun = run => run.startDay === run.endDay
     ? formatDay(run.startDay)
@@ -2984,7 +2991,7 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                      borderColor: filterEvent===name?colorMap[name]:"#e2e8f0",
                      backgroundColor: filterEvent===name?colorMap[name]:"#fff",
                      color: filterEvent===name?"#fff":"#64748b" }}>
-            {name}
+            {fmtEvent(name)}
           </button>
         ))}
       </div>
@@ -3036,7 +3043,7 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                       <button key={name} onClick={() => setEventDrill({ eventName:name, clan })}
                         style={{ display:"flex", alignItems:"center", gap:5, background:"#f8fafc", border:"1px solid #e2e8f0", borderRadius:7, padding:"3px 8px 3px 6px", cursor:"pointer", fontFamily:"'Outfit',system-ui,sans-serif" }}>
                         <div style={{ width:10, height:10, borderRadius:2, backgroundColor:colorMap[name], flexShrink:0 }}/>
-                        <span style={{ fontSize:10, color:"#475569", fontWeight:600 }}>{name}</span>
+                        <span style={{ fontSize:10, color:"#475569", fontWeight:600 }}>{fmtEvent(name)}</span>
                       </button>
                     ))}
                   </div>
@@ -3063,7 +3070,7 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                   <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                     <div style={{ width:14, height:14, borderRadius:3, backgroundColor:color, flexShrink:0, marginTop:1 }}/>
                     <div>
-                      <div style={{ fontSize:14, fontWeight:800, color:"#1e293b" }}>{run.dominant}</div>
+                      <div style={{ fontSize:14, fontWeight:800, color:"#1e293b" }}>{fmtEvent(run.dominant)}</div>
                       <div style={{ fontSize:12, color:CLAN_COLORS[clan]||"#475569", fontWeight:700, fontFamily:"'DM Mono',monospace", marginTop:2 }}>
                         {clan} · {formatRun(run)} · {run.runTotal.toLocaleString()} chests
                       </div>
@@ -3087,7 +3094,7 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                     <div key={eventName} style={{ marginBottom:14 }}>
                       <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
                         <div style={{ width:10, height:10, borderRadius:2, backgroundColor:colorMap[eventName], flexShrink:0 }}/>
-                        <span style={{ fontSize:13, fontWeight:700, color:"#1e293b", flex:1 }}>{eventName}</span>
+                        <span style={{ fontSize:13, fontWeight:700, color:"#1e293b", flex:1 }}>{fmtEvent(eventName)}</span>
                         <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#64748b" }}>{count.toLocaleString()}</span>
                       </div>
                       <div style={{ height:6, backgroundColor:"#f1f5f9", borderRadius:3, overflow:"hidden", marginBottom:6 }}>
@@ -3147,7 +3154,7 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                     <div key={eventName} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
                       <div style={{ width:10, height:10, borderRadius:2, backgroundColor:colorMap[eventName]||"#94a3b8", flexShrink:0 }}/>
                       <div style={{ flex:1 }}>
-                        <div style={{ fontSize:13, fontWeight:600, color:"#1e293b", marginBottom:4 }}>{eventName}</div>
+                        <div style={{ fontSize:13, fontWeight:600, color:"#1e293b", marginBottom:4 }}>{fmtEvent(eventName)}</div>
                         <div style={{ height:8, backgroundColor:"#f1f5f9", borderRadius:4, overflow:"hidden" }}>
                           <div style={{ width:`${pct}%`, height:"100%", backgroundColor:colorMap[eventName]||"#94a3b8", borderRadius:4 }}/>
                         </div>
@@ -3188,7 +3195,7 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                   <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                     <div style={{ width:14, height:14, borderRadius:3, backgroundColor:color, flexShrink:0, marginTop:1 }}/>
                     <div>
-                      <div style={{ fontSize:14, fontWeight:800, color:"#1e293b" }}>{eventName}</div>
+                      <div style={{ fontSize:14, fontWeight:800, color:"#1e293b" }}>{fmtEvent(eventName)}</div>
                       <div style={{ fontSize:12, color:CLAN_COLORS[clan]||"#475569", fontWeight:700, fontFamily:"'DM Mono',monospace", marginTop:1 }}>
                         {clan} · {eventTotal.toLocaleString()} chests across {allRuns.length} run{allRuns.length!==1?"s":""}
                       </div>
