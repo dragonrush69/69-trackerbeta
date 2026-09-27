@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "38";
+      var V = "39";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -361,6 +361,7 @@ async function loadFromSheets() {
     const mappedPlayers = (players || []).map(p => ({
       id: p.id, name: p.name, clan: p.clan, active: p.active,
       hero: p.hero, level: p.level, might: p.might,
+      joined_at: p.joined_at ?? null,
       levels: {
         G: p.rank_g ? `G${p.rank_g}` : null,
         M: p.rank_m ? `M${p.rank_m}` : null,
@@ -1816,10 +1817,17 @@ const PlayersScreen = () => {
               </div>
               <Icon name="chevR" size={14} color="#cbd5e1"/>
             </div>
-            {(p.hero != null || p.might != null) && (
-              <div style={{ display:"flex", gap:10, marginTop:8, paddingTop:8, borderTop:"1px solid #f1f5f9" }}>
-                {p.hero  != null && <span style={{ fontSize:11, fontWeight:700, color:"#7c3aed" }}>Hero {p.hero}</span>}
-                {p.might != null && <span style={{ fontSize:11, fontWeight:700, color:"#d97706" }}>{Number(p.might).toLocaleString()} Might</span>}
+            {(p.hero != null || p.might != null || p.joined_at != null) && (
+              <div style={{ display:"flex", gap:10, marginTop:8, paddingTop:8, borderTop:"1px solid #f1f5f9", alignItems:"center" }}>
+                <div style={{ display:"flex", gap:10, flex:1 }}>
+                  {p.hero  != null && <span style={{ fontSize:11, fontWeight:700, color:"#7c3aed" }}>Hero {p.hero}</span>}
+                  {p.might != null && <span style={{ fontSize:11, fontWeight:700, color:"#d97706" }}>{Number(p.might).toLocaleString()} Might</span>}
+                </div>
+                {p.joined_at != null && (
+                  <span style={{ fontSize:11, color:"#94a3b8", whiteSpace:"nowrap" }}>
+                    Joined {new Date(p.joined_at).toLocaleDateString("en-GB",{ month:"short", year:"numeric" })}
+                  </span>
+                )}
               </div>
             )}
           </Card>

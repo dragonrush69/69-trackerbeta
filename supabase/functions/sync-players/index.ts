@@ -147,7 +147,7 @@ Deno.serve(async (req) => {
       let updated  = 0;
       let skipped  = 0;
 
-      // Log the first member's full key set so we can see what CT actually returns
+      // Log first member's key set so we can see what CT actually returns
       if (ctMembers.length > 0) {
         console.log(`sync-players [${clan}] SAMPLE MEMBER KEYS:`, JSON.stringify(Object.keys(ctMembers[0])));
         console.log(`sync-players [${clan}] SAMPLE MEMBER:`, JSON.stringify(ctMembers[0]).slice(0, 800));
@@ -159,24 +159,54 @@ Deno.serve(async (req) => {
 
         if (!ctId || !ctName) { skipped++; continue; }
 
-        // Extract stats — try multiple possible CT field names
-        const ctHero  = ctMember.heroLevel   ?? ctMember.hero        ?? ctMember.heroLvl    ?? null;
-        const ctLevel = ctMember.level       ?? ctMember.playerLevel ?? ctMember.lvl        ?? null;
-        const ctMight = ctMember.might       ?? ctMember.power       ?? ctMember.mightPoints ?? ctMember.totalMight ?? null;
-        // G/M/S/E chest levels — CT may return as troopLevels, levels, or individual fields
+        // Diagnostic log for every member — captures raw level data so we can see what CT returns
         const rawLevels = ctMember.troopLevels ?? ctMember.levels ?? ctMember.chestLevels ?? null;
-        const ctLevels: Record<string,string> | null = rawLevels ? {
-          G: rawLevels.G ?? rawLevels.guard      ?? rawLevels.Guardian   ?? null,
-          M: rawLevels.M ?? rawLevels.monster    ?? rawLevels.Monster    ?? null,
-          S: rawLevels.S ?? rawLevels.specialist ?? rawLevels.Specialist ?? null,
-          E: rawLevels.E ?? rawLevels.cannon     ?? rawLevels.Cannon     ?? null,
-        } : null;
+        console.log(`sync-players [${clan}] MEMBER ${ctName}: guardsLevel=${ctMember.guardsLevel} rawLevels=${JSON.stringify(rawLevels)} troopLevels=${JSON.stringify(ctMember.troopLevels)} levels=${JSON.stringify(ctMember.levels)}`);
+
+        // Extract stats — try multiple possible CT field names
+        const ctHero     = ctMember.heroLevel   ?? ctMember.hero        ?? ctMember.heroLvl    ?? null;
+        const ctLevel    = ctMember.level       ?? ctMember.playerLevel ?? ctMember.lvl        ?? null;
+        const ctMight    = ctMember.might       ?? ctMember.power       ?? ctMember.mightPoints ?? ctMember.totalMight ?? null;
+        const ctJoinedAt = ctMember.joinedAt    ?? ctMember.joined_at   ?? ctMember.createdAt  ?? null;
+
+        // Helper: extract integer rank from CT value (handles "G9" strings or bare numbers)
+        const parseRank = (v: any): number | null => {
+          if (v == null) return null;
+          const n = parseInt(String(v).replace(/[^0-9]/g, ""), 10);
+          return isNaN(n) ? null : n;
+        };
+
+        // G/M/S/E chest levels — try structured objects first, then top-level CT fields
+        const rawG = rawLevels?.G ?? rawLevels?.guard      ?? rawLevels?.Guardian   ?? ctMember.guardsLevel    ?? null;
+        const rawM = rawLevels?.M ?? rawLevels?.monster    ?? rawLevels?.Monster    ?? ctMember.monsterLevel   ?? null;
+        const rawS = rawLevels?.S ?? rawLevels?.specialist ?? rawLevels?.Specialist ?? ctMember.specialistLevel ?? null;
+        const rawE = rawLevels?.E ?? rawLevels?.cannon     ?? rawLevels?.Cannon     ?? ctMember.cannonLevel    ?? null;
+
+        const rankG = parseRank(rawG);
+        const rankM = parseRank(rawM);
+        const rankS = parseRank(rawS);
+        const rankE = parseRank(rawE);
+
+        // Build levels JSONB in "G9" string format (matches frontend expectation)
+        const ctLevels: Record<string,string|null> = {
+          G: rankG != null ? `G${rankG}` : null,
+          M: rankM != null ? `M${rankM}` : null,
+          S: rankS != null ? `S${rankS}` : null,
+          E: rankE != null ? `E${rankE}` : null,
+        };
+        const hasAnyLevel = rankG != null || rankM != null || rankS != null || rankE != null;
 
         const statsUpdate: Record<string,any> = { updated_at: nowIso };
-        if (ctHero  != null) statsUpdate.hero  = ctHero;
-        if (ctLevel != null) statsUpdate.level = ctLevel;
-        if (ctMight != null) statsUpdate.might = ctMight;
-        if (ctLevels)        statsUpdate.levels = ctLevels;
+        if (ctHero     != null) statsUpdate.hero      = ctHero;
+        if (ctLevel    != null) statsUpdate.level     = ctLevel;
+        if (ctMight    != null) statsUpdate.might     = ctMight;
+        if (ctJoinedAt != null) statsUpdate.joined_at = ctJoinedAt;
+        // Update BOTH integer rank columns (used by frontend) AND levels JSONB
+        if (rankG != null) statsUpdate.rank_g = rankG;
+        if (rankM != null) statsUpdate.rank_m = rankM;
+        if (rankS != null) statsUpdate.rank_s = rankS;
+        if (rankE != null) statsUpdate.rank_e = rankE;
+        if (hasAnyLevel) statsUpdate.levels = ctLevels;
 
         const existing = nameToPlayer.get(ctName.toLowerCase().trim());
 
