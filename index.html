@@ -3181,7 +3181,7 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                             <div style={{ width:BAR_W, height:BAR_H, display:"flex", flexDirection:"column", justifyContent:"flex-end", overflow:"hidden", borderRadius:"4px 4px 0 0" }}>
                               <div style={{ width:"100%", height:`${barPct*100}%`, display:"flex", flexDirection:"column", minHeight:3 }}>
                                 {segments.map(([name, total]) => {
-                                  const segH = (total / run.runTotal) * 100;
+                                  const segH = (total / (filterEvent ? displayTotal : run.runTotal)) * 100;
                                   return (
                                     <div key={name} style={{
                                       width:"100%", flex:`0 0 ${segH}%`,
