@@ -153,6 +153,25 @@ Deno.serve(async (req) => {
 
         if (!ctId || !ctName) { skipped++; continue; }
 
+        // Extract stats — try multiple possible CT field names
+        const ctHero  = ctMember.heroLevel   ?? ctMember.hero        ?? ctMember.heroLvl    ?? null;
+        const ctLevel = ctMember.level       ?? ctMember.playerLevel ?? ctMember.lvl        ?? null;
+        const ctMight = ctMember.might       ?? ctMember.power       ?? ctMember.mightPoints ?? ctMember.totalMight ?? null;
+        // G/M/S/E chest levels — CT may return as troopLevels, levels, or individual fields
+        const rawLevels = ctMember.troopLevels ?? ctMember.levels ?? ctMember.chestLevels ?? null;
+        const ctLevels: Record<string,string> | null = rawLevels ? {
+          G: rawLevels.G ?? rawLevels.guard      ?? rawLevels.Guardian   ?? null,
+          M: rawLevels.M ?? rawLevels.monster    ?? rawLevels.Monster    ?? null,
+          S: rawLevels.S ?? rawLevels.specialist ?? rawLevels.Specialist ?? null,
+          E: rawLevels.E ?? rawLevels.cannon     ?? rawLevels.Cannon     ?? null,
+        } : null;
+
+        const statsUpdate: Record<string,any> = { updated_at: nowIso };
+        if (ctHero  != null) statsUpdate.hero  = ctHero;
+        if (ctLevel != null) statsUpdate.level = ctLevel;
+        if (ctMight != null) statsUpdate.might = ctMight;
+        if (ctLevels)        statsUpdate.levels = ctLevels;
+
         const existing = nameToPlayer.get(ctName.toLowerCase().trim());
 
         if (existing) {
@@ -165,7 +184,7 @@ Deno.serve(async (req) => {
               name:       ctName,
               clan,
               active:     existing.active ?? true,
-              updated_at: nowIso,
+              ...statsUpdate,
             }, { onConflict: "id" });
             if (insErr) { console.warn(`Could not insert new player ${ctName}: ${insErr.message}`); skipped++; continue; }
 
@@ -179,8 +198,14 @@ Deno.serve(async (req) => {
             if (delErr) { console.warn(`Could not delete old player ${ctName} (id=${existing.id}): ${delErr.message}`); }
 
             updated++;
+          } else {
+            // ID correct — still update stats if CT returned any
+            if (Object.keys(statsUpdate).length > 1) {
+              const { error: updErr } = await db.from("players").update(statsUpdate).eq("id", ctId);
+              if (updErr) console.warn(`Could not update stats for ${ctName}: ${updErr.message}`);
+              else updated++;
+            }
           }
-          // else: id already correct, nothing to do
         } else {
           // New player — insert
           const { error: insErr } = await db.from("players").insert({
@@ -188,7 +213,7 @@ Deno.serve(async (req) => {
             name:       ctName,
             clan,
             active:     true,
-            updated_at: nowIso,
+            ...statsUpdate,
           });
           if (insErr) { console.warn(`Could not insert new player ${ctName}: ${insErr.message}`); skipped++; continue; }
           inserted++;

@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "34";
+      var V = "35";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -521,7 +521,26 @@ const CLANS = ["69R", "69S", "69D"];
 
 // CT sync via Supabase Edge Function (no GAS / Google Sheets needed).
 // The Edge Function calls the CT API server-side and writes to Supabase.
-const EDGE_SYNC_URL = "https://jssybjxthkhrzxbzpslx.supabase.co/functions/v1/sync-epic-chests";
+const EDGE_SYNC_URL         = "https://jssybjxthkhrzxbzpslx.supabase.co/functions/v1/sync-epic-chests";
+const EDGE_SYNC_PLAYERS_URL = "https://jssybjxthkhrzxbzpslx.supabase.co/functions/v1/sync-players";
+async function syncPlayers() {
+  const res = await fetch(EDGE_SYNC_PLAYERS_URL, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + SUPABASE_KEY },
+    body: "{}",
+  });
+  if (!res.ok) throw new Error("sync-players HTTP " + res.status);
+  const result = await res.json();
+  if (result.success) {
+    const fresh = await loadFromSheets();
+    if (fresh && !fresh.error) {
+      window._appData = fresh;
+      if (typeof window._refreshApp === "function") window._refreshApp();
+    }
+  }
+  return result;
+}
+
 async function syncFromCT() {
   const res = await fetch(EDGE_SYNC_URL, {
     method:  "POST",
@@ -1670,10 +1689,25 @@ const PlayersScreen = () => {
   const [showInactive,setShowInactive]= useState(false);
   const [sortBy,      setSortBy]      = useState("might"); // "name" | "might"
   const [search,      setSearch]      = useState("");
-  const [editPlayer,  setEditPlayer]  = useState(null);
-  const [viewPlayer,  setViewPlayer]  = useState(null);
-  const [deactivating,setDeactivating]= useState(null);
+  const [editPlayer,    setEditPlayer]    = useState(null);
+  const [viewPlayer,    setViewPlayer]    = useState(null);
+  const [deactivating,  setDeactivating]  = useState(null);
+  const [syncingPlayers,setSyncingPlayers]= useState(false);
+  const [syncPlayerMsg, setSyncPlayerMsg] = useState("");
   const forceUpdate = useForceUpdate();
+
+  const handleSyncPlayers = async () => {
+    setSyncingPlayers(true); setSyncPlayerMsg("");
+    try {
+      const result = await syncPlayers();
+      const r = result.results || {};
+      const msg = Object.entries(r).map(([c,v]) =>
+        v.error ? `${c}: error` : `${c}: ${v.updated||0} updated, ${v.inserted||0} new`
+      ).join(" · ");
+      setSyncPlayerMsg(msg || "Done");
+    } catch(e) { setSyncPlayerMsg("Failed: " + e.message); }
+    setSyncingPlayers(false);
+  };
 
   const all      = storage.getPlayers();
   const filtered = all
@@ -1708,7 +1742,17 @@ const PlayersScreen = () => {
         <button onClick={()=>setShowInactive(!showInactive)} style={{ padding:"7px 14px", borderRadius:20, border:"1px solid #e2e8f0", fontSize:13, fontWeight:500, cursor:"pointer", whiteSpace:"nowrap", backgroundColor:showInactive?"#fef3c7":"#fff", color:"#475569", marginLeft:"auto" }}>
           {showInactive?"Hide inactive":"Show inactive"}
         </button>
+        {canEdit && (
+          <button onClick={handleSyncPlayers} disabled={syncingPlayers}
+            style={{ padding:"7px 14px", borderRadius:20, border:"1px solid #e2e8f0", fontSize:13, fontWeight:500, cursor:"pointer", whiteSpace:"nowrap", backgroundColor:"#fff", color:"#475569", display:"flex", alignItems:"center", gap:5 }}>
+            <Icon name="sync" size={13} color="#475569"/>
+            {syncingPlayers ? "Syncing…" : "Sync Players"}
+          </button>
+        )}
       </div>
+      {syncPlayerMsg && (
+        <div style={{ fontSize:11, color:"#64748b", marginBottom:8, paddingLeft:2 }}>{syncPlayerMsg}</div>
+      )}
 
       <div style={{ position:"relative", marginBottom:10 }}>
         <input
