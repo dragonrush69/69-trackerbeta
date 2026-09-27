@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "33";
+      var V = "34";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -1768,9 +1768,10 @@ const PlayersScreen = () => {
               </div>
               <Icon name="chevR" size={14} color="#cbd5e1"/>
             </div>
-            {(p.hero != null || p.might != null) && (
+            {(p.hero != null || p.level != null || p.might != null) && (
               <div style={{ display:"flex", gap:10, marginTop:8, paddingTop:8, borderTop:"1px solid #f1f5f9" }}>
                 {p.hero  != null && <span style={{ fontSize:11, fontWeight:700, color:"#7c3aed" }}>Hero {p.hero}</span>}
+                {p.level != null && <span style={{ fontSize:11, fontWeight:700, color:"#0891b2" }}>Lvl {p.level}</span>}
                 {p.might != null && <span style={{ fontSize:11, fontWeight:700, color:"#d97706" }}>{Number(p.might).toLocaleString()} Might</span>}
               </div>
             )}
