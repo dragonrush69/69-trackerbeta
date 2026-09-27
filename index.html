@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "30";
+      var V = "31";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -2923,10 +2923,14 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
       });
       if (!dominant) return;
 
-      // Bleed guard: if current run exists and this day's total is tiny vs run avg,
-      // absorb it regardless of dominant event (it's just reset-boundary spillover)
+      // Bleed guard: only absorb a day if BOTH the dominant matches the current run
+      // AND the total is tiny — genuine reset-boundary bleed is always the same event
+      // spilling a few chests over the reset. Never absorb a different event (that's
+      // a real new event with low 69S participation, not bleed).
       const currentDailyAvg = current ? current.runTotal / current.days.length : 0;
-      const isBleed = current && dayTotal < currentDailyAvg * BLEED_THRESHOLD;
+      const isBleed = current
+        && dominant === current.dominant
+        && dayTotal < currentDailyAvg * BLEED_THRESHOLD;
 
       if (current && (current.dominant === dominant || isBleed)) {
         current.endDay = day;
