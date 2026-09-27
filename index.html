@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "26";
+      var V = "27";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -2903,7 +2903,11 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
     playersByDayEvent[key][name] = (playersByDayEvent[key][name] || 0) + count;
   });
 
-  // Build event runs: consecutive epic-days with the same dominant event merged into one bar
+  // Build event runs: consecutive epic-days with the same dominant event merged into one bar.
+  // "Bleed guard": if a day's total is < 25% of the current run's daily average it's likely
+  // just a handful of chests collected around the reset boundary — absorb it into the
+  // current run rather than splitting into a new bar.
+  const BLEED_THRESHOLD = 0.25; // fraction of current run's daily avg below which we absorb
   const buildRuns = (clan) => {
     const clanDays = dailyTotals[clan] || {};
     const allDays  = Object.keys(clanDays).sort();
@@ -2912,21 +2916,28 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
     let current = null;
     allDays.forEach(day => {
       const dayData = clanDays[day] || {};
+      const dayTotal = Object.values(dayData).reduce((s,v)=>s+v, 0);
       let maxTotal = 0, dominant = null;
       Object.entries(dayData).forEach(([name, total]) => {
         if (total > maxTotal) { maxTotal = total; dominant = name; }
       });
       if (!dominant) return;
-      if (current && current.dominant === dominant) {
+
+      // Bleed guard: if current run exists and this day's total is tiny vs run avg,
+      // absorb it regardless of dominant event (it's just reset-boundary spillover)
+      const currentDailyAvg = current ? current.runTotal / current.days.length : 0;
+      const isBleed = current && dayTotal < currentDailyAvg * BLEED_THRESHOLD;
+
+      if (current && (current.dominant === dominant || isBleed)) {
         current.endDay = day;
         current.days.push(day);
         Object.entries(dayData).forEach(([name, total]) => {
           current.totals[name] = (current.totals[name] || 0) + total;
-          current.runTotal += total;
         });
+        current.runTotal += dayTotal;
       } else {
         current = { dominant, startDay:day, endDay:day, days:[day], totals:{...dayData},
-                    runTotal: Object.values(dayData).reduce((s,v)=>s+v, 0) };
+                    runTotal: dayTotal };
         runs.push(current);
       }
     });
