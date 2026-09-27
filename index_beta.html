@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "41";
+      var V = "42";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -329,8 +329,8 @@ async function loadFromSheets() {
       db.from("fragment_distributions").select("*").order("date", { ascending: false }),
       // Omens chests: Arcane Chest from Epic Arcanomancer Squad (2 days during Omens event)
       db.from("chests").select("player_id, clan, generated_at, quantity").eq("chest_source", "Epic Arcanomancer Squad"),
-      // Olympus chests: Olympus Chest / Olympus Elite Chest from Event Trials of Olympus
-      db.from("chests").select("player_id, clan, generated_at, quantity").eq("chest_source", "Event Trials of Olympus"),
+      // Olympus chests: Chimera (Day 1) + Basilisk (Day 2) + Briareus (Day 5) — summed per player per event
+      db.from("chests").select("player_id, clan, generated_at, quantity").in("chest_source", ["Epic Chimera Squad", "Epic Basilisk squad", "Epic Briareus Squad"]),
     ]);
 
     // Fetch epic squad breakdown separately so a timeout can't break the main load
