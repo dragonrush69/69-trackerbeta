@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "39";
+      var V = "40";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -305,7 +305,7 @@ async function loadFromSheets() {
       { data: tinManEntries },
       { data: ragnarokEntries },
       { data: omens },
-      { data: olympus },
+      { data: olympusEntries },
       { data: epicChests },
       { data: levelRequests },
       { data: rotationLog },
@@ -317,7 +317,7 @@ async function loadFromSheets() {
       db.from("tournament_entries").select("*").eq("tournament_type", "Rise Of The Ancients").order("tournament_date", { ascending: false }),
       db.from("tournament_entries").select("*").eq("tournament_type", "Ragnarok").order("tournament_date", { ascending: false }),
       db.from("omens").select("*").order("week_start", { ascending: false }),
-      db.from("olympus").select("*").order("week_start", { ascending: false }),
+      db.from("tournament_entries").select("*").eq("tournament_type", "Trials Of Olympus").order("tournament_date", { ascending: false }),
       db.from("epic_chests").select("*").order("week_start", { ascending: false }),
       db.from("level_requests").select("*").order("date", { ascending: false }),
       db.from("rotation_log").select("*").order("date", { ascending: false }),
@@ -353,7 +353,13 @@ async function loadFromSheets() {
       scores[clan + "_tin_man"]       = buildScoreEntries(cl(patchTournRows(tinManEntries)),   { points: "points" });
       scores[clan + "_ragnarok"]      = buildScoreEntries(cl(patchTournRows(ragnarokEntries)), { points: "points" });
       scores[clan + "_omens"]         = buildScoreEntries(cl(omens),        { essence:"essence", damage:"damage", chests:"chests" });
-      scores[clan + "_olympus"]       = buildScoreEntries(cl(olympus),      { score:"score", chests:"total_chests" });
+      // Olympus from tournament_entries: points=score, meta.chests=chests (if CT provides it)
+      const patchedOlympus = cl(patchTournRows(olympusEntries)).map(r => ({
+        ...r,
+        score:  r.points ?? 0,
+        chests: r.meta?.chests ?? 0,
+      }));
+      scores[clan + "_olympus"]       = buildScoreEntries(patchedOlympus,   { score:"score", chests:"chests" });
       scores[clan + "_epic_chests"]   = buildScoreEntries(cl(epicChests),   { score:"total_score" });
     });
 

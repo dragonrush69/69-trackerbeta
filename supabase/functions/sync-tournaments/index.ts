@@ -145,6 +145,11 @@ Deno.serve(async (req) => {
           for (const [tournDate, scoreObj] of Object.entries(dateMap as Record<string, any>)) {
             const points = scoreObj?.points != null ? Number(scoreObj.points) : null;
 
+            // Log first Olympus scoreObj so we can see what fields CT provides
+            if (tournType === "Trials Of Olympus" && dbRows.filter(r => r.tournament_type === "Trials Of Olympus").length === 0) {
+              console.log(`sync-tournaments [${clan}] Olympus scoreObj sample:`, JSON.stringify(scoreObj));
+            }
+
             dbRows.push({
               ct_entry_id:      `${playerId}__${tournType}__${tournDate}__${clan}`,
               ct_tournament_id: `${tournType}__${tournDate}__${clan}`,
@@ -157,6 +162,7 @@ Deno.serve(async (req) => {
               rank:             null,
               might:            null,
               hero:             null,
+              meta:             scoreObj ?? null,
               synced_at:        nowIso,
             });
           }
