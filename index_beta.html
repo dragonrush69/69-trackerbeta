@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "28";
+      var V = "29";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -3059,7 +3059,10 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
         const { run, clan } = drilldown;
         const color     = colorMap[run.dominant] || "#94a3b8";
         const runPlayerData = getRunPlayerData(clan, run);
-        const sortedEvents  = Object.entries(run.totals).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
+        // Hide events that are < 2% of run total — these are reset-boundary bleed noise
+        const sortedEvents  = Object.entries(run.totals)
+          .filter(([,v]) => v > 0 && v >= run.runTotal * 0.02)
+          .sort((a,b)=>b[1]-a[1]);
         return (
           <div style={{ position:"fixed", inset:0, backgroundColor:"rgba(0,0,0,0.5)", zIndex:9000, display:"flex", alignItems:"flex-end" }}
             onMouseDown={e => { if (e.target===e.currentTarget) setDrilldown(null); }}>
