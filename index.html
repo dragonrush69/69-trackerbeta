@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "31";
+      var V = "32";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -3058,14 +3058,13 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                             {/* Stacked bar */}
                             <div style={{ width:BAR_W, height:BAR_H, display:"flex", flexDirection:"column", justifyContent:"flex-end", overflow:"hidden", borderRadius:"4px 4px 0 0" }}>
                               <div style={{ width:"100%", height:`${barPct*100}%`, display:"flex", flexDirection:"column", minHeight:3 }}>
-                                {segments.map(([name, total], i) => {
+                                {segments.map(([name, total]) => {
                                   const segH = (total / run.runTotal) * 100;
-                                  const isTop = i === segments.length - 1;
                                   return (
                                     <div key={name} style={{
                                       width:"100%", flex:`0 0 ${segH}%`,
                                       backgroundColor: colorMap[name] || "#94a3b8",
-                                      borderRadius: isTop ? "4px 4px 0 0" : 0,
+                                      borderRadius: 0,
                                       minHeight: 2
                                     }}/>
                                   );
