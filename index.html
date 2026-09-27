@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "29";
+      var V = "30";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -3013,26 +3013,68 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
               <div style={{ textAlign:"center", fontSize:12, color:"#94a3b8", padding:"8px 0" }}>No data</div>
             ) : (
               <>
-                <div style={{ overflowX:"auto" }}>
-                  <div style={{ display:"flex", gap:6, alignItems:"flex-end", minWidth: filteredRuns.length * (BAR_W + 6) }}>
-                    {filteredRuns.map(run => {
-                      const barPct = run.runTotal / maxRunTotal;
-                      const color  = colorMap[run.dominant] || "#94a3b8";
-                      return (
-                        <div key={run.startDay} onClick={() => setDrilldown({ run, clan })}
-                          style={{ flex:`0 0 ${BAR_W}px`, display:"flex", flexDirection:"column", alignItems:"center", cursor:"pointer" }}>
-                          <div style={{ fontSize:9, color:"#94a3b8", fontFamily:"'DM Mono',monospace", marginBottom:2, height:14, display:"flex", alignItems:"center" }}>
-                            {run.runTotal.toLocaleString()}
+                {/* Y-axis + bars */}
+                <div style={{ display:"flex", gap:0, alignItems:"flex-start" }}>
+                  {/* Y-axis ticks */}
+                  <div style={{ flexShrink:0, width:42, display:"flex", flexDirection:"column", justifyContent:"space-between",
+                                height: BAR_H + 14, paddingBottom:14, paddingTop:0 }}>
+                    {[1, 0.75, 0.5, 0.25, 0].map(pct => (
+                      <div key={pct} style={{ fontSize:8, color:"#cbd5e1", textAlign:"right", lineHeight:1, paddingRight:4,
+                                              fontFamily:"'DM Mono',monospace" }}>
+                        {maxRunTotal > 0 ? (maxRunTotal * pct >= 1000
+                          ? `${Math.round(maxRunTotal * pct / 1000)}k`
+                          : Math.round(maxRunTotal * pct).toString()) : ""}
+                      </div>
+                    ))}
+                  </div>
+                  {/* Scrollable bar area */}
+                  <div style={{ flex:1, overflowX:"auto", position:"relative" }}>
+                    {/* Horizontal gridlines */}
+                    <div style={{ position:"absolute", top:0, left:0, right:0, height:BAR_H, pointerEvents:"none", zIndex:0 }}>
+                      {[0, 0.25, 0.5, 0.75, 1].map(pct => (
+                        <div key={pct} style={{ position:"absolute", left:0, right:0,
+                          top:`${(1 - pct) * 100}%`, borderTop:"1px dashed #f1f5f9" }}/>
+                      ))}
+                    </div>
+                    <div style={{ display:"flex", gap:6, alignItems:"flex-end", position:"relative", zIndex:1,
+                                  minWidth: filteredRuns.length * (BAR_W + 6) }}>
+                      {filteredRuns.map(run => {
+                        const barPct = run.runTotal / maxRunTotal;
+                        // Stacked segments: filter bleed (<2%), sort small→large so largest sits at bottom
+                        const segments = Object.entries(run.totals)
+                          .filter(([,v]) => v > 0 && v >= run.runTotal * 0.02)
+                          .sort((a,b) => a[1] - b[1]); // ascending = smallest at top
+                        return (
+                          <div key={run.startDay} onClick={() => setDrilldown({ run, clan })}
+                            style={{ flex:`0 0 ${BAR_W}px`, display:"flex", flexDirection:"column", alignItems:"center", cursor:"pointer" }}>
+                            <div style={{ fontSize:9, color:"#94a3b8", fontFamily:"'DM Mono',monospace", marginBottom:2, height:14,
+                                          display:"flex", alignItems:"center" }}>
+                              {run.runTotal.toLocaleString()}
+                            </div>
+                            {/* Stacked bar */}
+                            <div style={{ width:BAR_W, height:BAR_H, display:"flex", flexDirection:"column", justifyContent:"flex-end", overflow:"hidden", borderRadius:"4px 4px 0 0" }}>
+                              <div style={{ width:"100%", height:`${barPct*100}%`, display:"flex", flexDirection:"column", minHeight:3 }}>
+                                {segments.map(([name, total], i) => {
+                                  const segH = (total / run.runTotal) * 100;
+                                  const isTop = i === segments.length - 1;
+                                  return (
+                                    <div key={name} style={{
+                                      width:"100%", flex:`0 0 ${segH}%`,
+                                      backgroundColor: colorMap[name] || "#94a3b8",
+                                      borderRadius: isTop ? "4px 4px 0 0" : 0,
+                                      minHeight: 2
+                                    }}/>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                            <div style={{ marginTop:4, fontSize:9, textAlign:"center", lineHeight:1.3, color:"#475569", fontWeight:700 }}>
+                              {formatRun(run)}
+                            </div>
                           </div>
-                          <div style={{ width:BAR_W, height:BAR_H, display:"flex", flexDirection:"column", justifyContent:"flex-end" }}>
-                            <div style={{ width:"100%", height:`${barPct*100}%`, minHeight:3, borderRadius:"4px 4px 0 0", backgroundColor:color }}/>
-                          </div>
-                          <div style={{ marginTop:4, fontSize:9, textAlign:"center", lineHeight:1.3, color:"#475569", fontWeight:700 }}>
-                            {formatRun(run)}
-                          </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
 
