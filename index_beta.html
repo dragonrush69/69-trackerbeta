@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "36";
+      var V = "37";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -1747,7 +1747,7 @@ const PlayersScreen = () => {
         </button>
       </div>
 
-      {canEdit && (
+      {role === "super" && (
         <button onClick={handleSyncPlayers} disabled={syncingPlayers}
           style={{ width:"100%", marginBottom:10, padding:"10px 14px", borderRadius:10, border:"1.5px solid #e2e8f0", fontSize:13, fontWeight:600, cursor:syncingPlayers?"not-allowed":"pointer", backgroundColor:syncingPlayers?"#f8fafc":"#fff", color:syncingPlayers?"#94a3b8":"#475569", display:"flex", alignItems:"center", justifyContent:"center", gap:6, fontFamily:"'Outfit',system-ui,sans-serif" }}>
           <Icon name="sync" size={15} color={syncingPlayers?"#94a3b8":"#475569"}/>
@@ -1816,10 +1816,9 @@ const PlayersScreen = () => {
               </div>
               <Icon name="chevR" size={14} color="#cbd5e1"/>
             </div>
-            {(p.hero != null || p.level != null || p.might != null) && (
+            {(p.hero != null || p.might != null) && (
               <div style={{ display:"flex", gap:10, marginTop:8, paddingTop:8, borderTop:"1px solid #f1f5f9" }}>
                 {p.hero  != null && <span style={{ fontSize:11, fontWeight:700, color:"#7c3aed" }}>Hero {p.hero}</span>}
-                {p.level != null && <span style={{ fontSize:11, fontWeight:700, color:"#0891b2" }}>Lvl {p.level}</span>}
                 {p.might != null && <span style={{ fontSize:11, fontWeight:700, color:"#d97706" }}>{Number(p.might).toLocaleString()} Might</span>}
               </div>
             )}

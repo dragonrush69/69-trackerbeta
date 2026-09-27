@@ -147,6 +147,12 @@ Deno.serve(async (req) => {
       let updated  = 0;
       let skipped  = 0;
 
+      // Log the first member's full key set so we can see what CT actually returns
+      if (ctMembers.length > 0) {
+        console.log(`sync-players [${clan}] SAMPLE MEMBER KEYS:`, JSON.stringify(Object.keys(ctMembers[0])));
+        console.log(`sync-players [${clan}] SAMPLE MEMBER:`, JSON.stringify(ctMembers[0]).slice(0, 800));
+      }
+
       for (const ctMember of ctMembers) {
         const ctId   = ctMember.id   ?? ctMember.memberId ?? ctMember.userId;
         const ctName = ctMember.name ?? ctMember.username ?? ctMember.playerName;
