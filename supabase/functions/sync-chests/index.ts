@@ -13,9 +13,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const CT_API_BASE   = "https://api.chesttracker.com/v1";
 const CLANS_TO_SYNC = ["69R", "69S"];
-const PAGE_SIZE     = 100;
-const MAX_PAGES     = 20;   // 2,000 rows per clan per run — covers ~3 weeks comfortably
-const KEEP_WEEKS    = 3;    // only keep chests from the last 3 weeks
+const PAGE_SIZE     = 500;  // CT supports up to 500 rows per page
+const MAX_PAGES     = 20;   // 20 × 500 = 10,000 rows per clan — normal daily sync
+const KEEP_WEEKS    = 13;   // keep chests from the last 13 weeks (~3 months) to cover Olympus history
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
 
@@ -67,17 +67,23 @@ async function streamChestsForClan(
   nowIso:         string,
   db:             any,
   definitionMap:  Map<string, any>,
+  maxPagesOverride?: number,
+  pageSizeOverride?: number,
+  startPageOverride?: number,
+  sourcesFilter?: string[],   // if set, only store chests whose source matches one of these substrings
 ): Promise<{ fetched: number; upserted: number; skipped: number }> {
+  const effectiveMaxPages = maxPagesOverride ?? MAX_PAGES;
+  const effectivePageSize = pageSizeOverride ?? PAGE_SIZE;
   let fetched  = 0;
   let upserted = 0;
   let skipped  = 0;
-  let page     = 0;
+  let page = startPageOverride ?? 0;
 
   while (true) {
     const url =
       `${CT_API_BASE}/chests` +
       `?sort=generatedAt,desc` +
-      `&size=${PAGE_SIZE}` +
+      `&size=${effectivePageSize}` +
       `&page=${page}`;
 
     if (page === 0) console.log(`  [${clan}] CT URL: ${url}`);
@@ -99,7 +105,17 @@ async function streamChestsForClan(
       if (!r.id)                                          { skipped++; continue; }
       if (!r.memberId || !validPlayerIds.has(r.memberId)) { skipped++; continue; }
 
-      const def = definitionMap.get(r.definitionId ?? "");
+      const def         = definitionMap.get(r.definitionId ?? "");
+      const chestSource = def?.source ?? null;
+
+      // If sourcesFilter is active, skip chests whose source doesn't match any substring
+      if (sourcesFilter && sourcesFilter.length > 0) {
+        if (!chestSource || !sourcesFilter.some(f => chestSource.toLowerCase().includes(f.toLowerCase()))) {
+          skipped++;
+          continue;
+        }
+      }
+
       dbRows.push({
         id:            r.id,
         player_id:     r.memberId,
@@ -107,7 +123,7 @@ async function streamChestsForClan(
         definition_id: r.definitionId  ?? null,
         color:         r.color         ?? null,
         chest_name:    def?.name       ?? null,
-        chest_source:  def?.source     ?? null,
+        chest_source:  chestSource,
         chest_type:    def?.type       ?? null,
         quantity:      r.quantity      ?? 1,
         points:        def?.points     ?? null,
@@ -128,8 +144,8 @@ async function streamChestsForClan(
     if (pageRows.length < PAGE_SIZE || hitCutoff) break;
 
     page++;
-    if (page >= MAX_PAGES) {
-      console.log(`  [${clan}] hit MAX_PAGES (${MAX_PAGES})`);
+    if (page >= effectiveMaxPages) {
+      console.log(`  [${clan}] hit MAX_PAGES (${effectiveMaxPages})`);
       break;
     }
   }
@@ -236,12 +252,29 @@ Deno.serve(async (req) => {
     const resetDow     = weekResetCfg.dayOfWeek ?? 0;
     const resetHour    = weekResetCfg.hour      ?? 17;
 
-    // ── Cutoff: only keep last KEEP_WEEKS weeks ───────────────────────────────
+    // ── Backfill mode: POST body options:
+    //   { "backfill": true }                          — 13 weeks, up to 2000 pages
+    //   { "backfill": true, "weeksBack": 13 }         — explicit weeks
+    //   { "backfill": true, "pageSize": 500 }         — larger CT page size (if supported)
+    //   { "backfill": true, "startPage": 100 }        — resume from a page offset
+    let bodyJson: any = {};
+    try { bodyJson = await req.clone().json(); } catch { /* no body */ }
+    const isBackfill    = bodyJson?.backfill === true;
+    const weeksBack     = bodyJson?.weeksBack  ? Number(bodyJson.weeksBack)  : (isBackfill ? 13 : KEEP_WEEKS);
+    const maxPages      = bodyJson?.maxPages   ? Number(bodyJson.maxPages)   : (isBackfill ? 2000 : MAX_PAGES);
+    const pageSizeReq   = bodyJson?.pageSize   ? Number(bodyJson.pageSize)   : PAGE_SIZE;
+    const startPage     = bodyJson?.startPage  ? Number(bodyJson.startPage)  : 0;
+    // sourcesFilter: array of substrings to match against chest_source (backfill only)
+    // e.g. ["Olympus","Omens","Dread"] to capture only Olympus and Dark Omens chests
+    const sourcesFilter: string[] = Array.isArray(bodyJson?.sourcesFilter) ? bodyJson.sourcesFilter : [];
+    // clan: restrict sync to a single clan tag, e.g. "69S" (default: all clans)
+    const clansToRun: string[] = bodyJson?.clan ? [bodyJson.clan] : CLANS_TO_SYNC;
+
     const now       = new Date();
     const nowIso    = now.toISOString();
-    const cutoff    = new Date(now.getTime() - KEEP_WEEKS * 7 * 24 * 3600 * 1000);
+    const cutoff    = new Date(now.getTime() - weeksBack * 7 * 24 * 3600 * 1000);
     const cutoffIso = cutoff.toISOString();
-    console.log(`sync-chests: keeping chests since ${cutoffIso}`);
+    console.log(`sync-chests: ${isBackfill ? "BACKFILL MODE" : "normal"} — keeping chests since ${cutoffIso} (maxPages=${maxPages}, startPage=${startPage}${sourcesFilter.length > 0 ? `, sourcesFilter=[${sourcesFilter.join(",")}]` : ""})`);
 
     // ── Get clan/member maps + definitions from CT ────────────────────────────
     const baseToken = await getCTToken(email, password);
@@ -298,7 +331,7 @@ Deno.serve(async (req) => {
     const results: Record<string, any> = {};
     let totalUpserted = 0;
 
-    for (const clan of CLANS_TO_SYNC) {
+    for (const clan of clansToRun) {
       const clanId   = tagToClanId[clan];
       const memberId = clanId ? clanIdToMemberId[clanId] : undefined;
 
@@ -313,6 +346,8 @@ Deno.serve(async (req) => {
 
       const clanResult = await streamChestsForClan(
         clanToken, cutoffIso, validPlayerIds, clan, nowIso, db, definitionMap,
+        maxPages, pageSizeReq, startPage,
+        sourcesFilter.length > 0 ? sourcesFilter : undefined,
       );
 
       totalUpserted += clanResult.upserted;
@@ -320,13 +355,17 @@ Deno.serve(async (req) => {
       console.log(`sync-chests [${clan}]: done — upserted=${clanResult.upserted}`);
     }
 
-    // ── Prune rows older than KEEP_WEEKS ─────────────────────────────────────
-    const { error: pruneErr } = await db
-      .from("chests")
-      .delete()
-      .lt("generated_at", cutoffIso);
-    if (pruneErr) console.warn("sync-chests: prune error:", pruneErr.message);
-    else console.log(`sync-chests: pruned rows older than ${cutoffIso}`);
+    // ── Prune rows older than cutoff (skip during backfill to preserve history) ─
+    if (!isBackfill) {
+      const { error: pruneErr } = await db
+        .from("chests")
+        .delete()
+        .lt("generated_at", cutoffIso);
+      if (pruneErr) console.warn("sync-chests: prune error:", pruneErr.message);
+      else console.log(`sync-chests: pruned rows older than ${cutoffIso}`);
+    } else {
+      console.log("sync-chests: backfill mode — skipping prune to preserve history");
+    }
 
     // ── Write weekly aggregates ───────────────────────────────────────────────
     await updateWeeklyTotals(db, nowIso, resetDow, resetHour);
