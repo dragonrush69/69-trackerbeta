@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "35";
+      var V = "36";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -1700,12 +1700,15 @@ const PlayersScreen = () => {
     setSyncingPlayers(true); setSyncPlayerMsg("");
     try {
       const result = await syncPlayers();
+      if (!result.success) throw new Error(result.error || "Unknown error");
       const r = result.results || {};
       const msg = Object.entries(r).map(([c,v]) =>
-        v.error ? `${c}: error` : `${c}: ${v.updated||0} updated, ${v.inserted||0} new`
+        v.error ? `${c}: ${v.error}` : `${c}: ${v.updated||0} updated, ${v.inserted||0} new`
       ).join(" · ");
-      setSyncPlayerMsg(msg || "Done");
-    } catch(e) { setSyncPlayerMsg("Failed: " + e.message); }
+      setSyncPlayerMsg(msg || "Sync complete");
+    } catch(e) {
+      setSyncPlayerMsg("Failed: " + e.message);
+    }
     setSyncingPlayers(false);
   };
 
@@ -1742,16 +1745,17 @@ const PlayersScreen = () => {
         <button onClick={()=>setShowInactive(!showInactive)} style={{ padding:"7px 14px", borderRadius:20, border:"1px solid #e2e8f0", fontSize:13, fontWeight:500, cursor:"pointer", whiteSpace:"nowrap", backgroundColor:showInactive?"#fef3c7":"#fff", color:"#475569", marginLeft:"auto" }}>
           {showInactive?"Hide inactive":"Show inactive"}
         </button>
-        {canEdit && (
-          <button onClick={handleSyncPlayers} disabled={syncingPlayers}
-            style={{ padding:"7px 14px", borderRadius:20, border:"1px solid #e2e8f0", fontSize:13, fontWeight:500, cursor:"pointer", whiteSpace:"nowrap", backgroundColor:"#fff", color:"#475569", display:"flex", alignItems:"center", gap:5 }}>
-            <Icon name="sync" size={13} color="#475569"/>
-            {syncingPlayers ? "Syncing…" : "Sync Players"}
-          </button>
-        )}
       </div>
+
+      {canEdit && (
+        <button onClick={handleSyncPlayers} disabled={syncingPlayers}
+          style={{ width:"100%", marginBottom:10, padding:"10px 14px", borderRadius:10, border:"1.5px solid #e2e8f0", fontSize:13, fontWeight:600, cursor:syncingPlayers?"not-allowed":"pointer", backgroundColor:syncingPlayers?"#f8fafc":"#fff", color:syncingPlayers?"#94a3b8":"#475569", display:"flex", alignItems:"center", justifyContent:"center", gap:6, fontFamily:"'Outfit',system-ui,sans-serif" }}>
+          <Icon name="sync" size={15} color={syncingPlayers?"#94a3b8":"#475569"}/>
+          {syncingPlayers ? "Syncing players…" : "Sync Players from ChestTracker"}
+        </button>
+      )}
       {syncPlayerMsg && (
-        <div style={{ fontSize:11, color:"#64748b", marginBottom:8, paddingLeft:2 }}>{syncPlayerMsg}</div>
+        <div style={{ fontSize:12, color: syncPlayerMsg.startsWith("Failed") ? "#dc2626" : "#16a34a", marginBottom:8, paddingLeft:2, fontWeight:600 }}>{syncPlayerMsg}</div>
       )}
 
       <div style={{ position:"relative", marginBottom:10 }}>
