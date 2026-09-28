@@ -89,13 +89,18 @@ async function streamChestsForClan(
     if (page === 0) console.log(`  [${clan}] CT URL: ${url}`);
     const raw = await ctGet(url, token);
 
-    if (page === 0) {
-      const firstRow = Array.isArray(raw[0]) ? raw[0][0] : (Array.isArray(raw) ? raw[0] : null);
-      console.log(`  [${clan}] first generatedAt from CT: ${firstRow?.generatedAt ?? "none"}`);
-    }
-
     const pageRows: any[] = Array.isArray(raw[0]) ? raw[0] : (Array.isArray(raw) ? raw : []);
     fetched += pageRows.length;
+
+    if (page === 0) {
+      const firstRow = pageRows[0] ?? null;
+      console.log(`  [${clan}] first generatedAt from CT: ${firstRow?.generatedAt ?? "none"}`);
+      // Log full structure of first raw CT chest record so we can detect API changes
+      if (firstRow) {
+        console.log(`  [${clan}] CT chest keys: ${Object.keys(firstRow).join(", ")}`);
+        console.log(`  [${clan}] CT chest sample: ${JSON.stringify(firstRow).slice(0, 600)}`);
+      }
+    }
 
     const dbRows: any[] = [];
     let hitCutoff = false;
@@ -105,8 +110,22 @@ async function streamChestsForClan(
       if (!r.id)                                          { skipped++; continue; }
       if (!r.memberId || !validPlayerIds.has(r.memberId)) { skipped++; continue; }
 
-      const def         = definitionMap.get(r.definitionId ?? "");
-      const chestSource = def?.source ?? null;
+      // Definition lookup (may be empty if CT API no longer returns definitionId)
+      const defId = r.definitionId ?? r.typeId ?? r.chestDefinitionId ?? null;
+      const def   = definitionMap.get(defId ?? "");
+
+      // New CT API format: chest metadata comes from the reward object, not a definition
+      // reward: { guardsLevel: N, <optional bonus>: value, ... }
+      const reward      = (r.reward ?? {}) as Record<string, any>;
+      const guardsLvl   = reward.guardsLevel != null ? Number(reward.guardsLevel) : null;
+
+      // Extract chest metadata: definition map first, then reward-based inference
+      const chestName   = def?.name   ?? r.chestName ?? r.name   ?? (guardsLvl != null ? `Guards Chest L${guardsLvl}` : null);
+      const chestSource = def?.source ?? r.chestSource ?? r.source ?? (guardsLvl != null ? "Guards" : null);
+      const chestType   = def?.type   ?? r.chestType  ?? r.type   ?? (guardsLvl != null ? "Guards"  : null);
+      const chestPoints = def?.points != null ? def.points
+                        : (r.points   != null ? r.points
+                        : guardsLvl);  // guardsLevel IS the point value in the new CT API
 
       // If sourcesFilter is active, skip chests whose source doesn't match any substring
       if (sourcesFilter && sourcesFilter.length > 0) {
@@ -120,13 +139,13 @@ async function streamChestsForClan(
         id:            r.id,
         player_id:     r.memberId,
         clan,
-        definition_id: r.definitionId  ?? null,
+        definition_id: defId,
         color:         r.color         ?? null,
-        chest_name:    def?.name       ?? null,
+        chest_name:    chestName,
         chest_source:  chestSource,
-        chest_type:    def?.type       ?? null,
+        chest_type:    chestType,
         quantity:      r.quantity      ?? 1,
-        points:        def?.points     ?? null,
+        points:        chestPoints,
         generated_at:  r.generatedAt   ?? r.rawTime ?? null,
         reward:        r.reward        ?? null,
         synced_at:     nowIso,

@@ -55,57 +55,48 @@ Deno.serve(async (req) => {
     const clanPayload = JSON.parse(atob(clanPayloadB64.replace(/-/g, "+").replace(/_/g, "/")));
     console.log("CLAN TOKEN PAYLOAD:", JSON.stringify(clanPayload).slice(0, 500));
 
-    // Date window covering the last 30 days for summary
+    // Date window — 3 months back to cover Olympus/Omens history
     const endDate   = new Date().toISOString();
-    const startDate = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+    const startDate = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString();
 
-    const endpointsBase = [
-      "/tournaments",
-      "/tournaments?size=5",
-      `/tournaments?type=Rise+of+Ancient&size=5`,
-      `/clans/${clan69R?.id}/tournaments`,
-    ];
-    const endpointsClan = [
-      "/tournaments?size=10&sort=date,desc",
-      `/tournaments?size=5&filter=type,%%,Rise`,
-      `/tournaments/summary?start=${encodeURIComponent(startDate)}&end=${encodeURIComponent(endDate)}`,
-      `/clans/${clan69R?.id}/tournaments`,
-      `/members?clanId=${clan69R?.id}&size=5`,
+    // Test /chests endpoint with various filter and page-size params
+    // Goal: find if CT supports date filtering so we don't have to page through everything
+    const chestEndpoints = [
+      // Baseline — what we already use
+      `/chests?sort=generatedAt,desc&size=5&page=0`,
+      // Larger page size
+      `/chests?sort=generatedAt,desc&size=500&page=0`,
+      // Date filters — various common param names
+      `/chests?sort=generatedAt,desc&size=5&startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`,
+      `/chests?sort=generatedAt,desc&size=5&from=${encodeURIComponent(startDate)}&to=${encodeURIComponent(endDate)}`,
+      `/chests?sort=generatedAt,desc&size=5&since=${encodeURIComponent(startDate)}`,
+      `/chests?sort=generatedAt,desc&size=5&generatedAfter=${encodeURIComponent(startDate)}`,
+      // Filter by chest source/type
+      `/chests?sort=generatedAt,desc&size=5&source=Epic+Chimera+Squad`,
+      `/chests?sort=generatedAt,desc&size=5&type=Epic+Squad`,
     ];
 
     const results: Record<string, any> = {};
 
-    for (const ep of endpointsBase) {
-      try {
-        const res = await fetch(`${CT_API_BASE}${ep}`, {
-          headers: { Authorization: `Bearer ${baseToken}` },
-          signal: AbortSignal.timeout(10_000),
-        });
-        const text = await res.text();
-        let parsed: any;
-        try { parsed = JSON.parse(text); } catch { parsed = text; }
-        console.log(`[base] ${ep} → ${res.status}: ${JSON.stringify(parsed).slice(0, 300)}`);
-      } catch (err: any) {
-        console.log(`[base] ${ep} → ERROR: ${err.message}`);
-      }
-    }
-
-    for (const ep of endpointsClan) {
+    for (const ep of chestEndpoints) {
       try {
         const res = await fetch(`${CT_API_BASE}${ep}`, {
           headers: { Authorization: `Bearer ${clanToken}` },
-          signal: AbortSignal.timeout(10_000),
+          signal: AbortSignal.timeout(15_000),
         });
         const text = await res.text();
         let parsed: any;
         try { parsed = JSON.parse(text); } catch { parsed = text; }
-        console.log(`[clan] ${ep} → ${res.status}: ${JSON.stringify(parsed).slice(0, 300)}`);
+        // Log row count + first row generatedAt so we can see if date filter worked
+        const rows = Array.isArray(parsed[0]) ? parsed[0] : (Array.isArray(parsed) ? parsed : []);
+        const totalHint = parsed?.[1]?.total ?? parsed?.total ?? "?";
+        console.log(`[chests] ${ep} → ${res.status} rows=${rows.length} total=${totalHint} firstAt=${rows[0]?.generatedAt ?? "none"} lastAt=${rows[rows.length-1]?.generatedAt ?? "none"}`);
       } catch (err: any) {
-        console.log(`[clan] ${ep} → ERROR: ${err.message}`);
+        console.log(`[chests] ${ep} → ERROR: ${err.message}`);
       }
     }
 
-    return new Response(JSON.stringify(results, null, 2), { headers: corsHeaders });
+    return new Response(JSON.stringify({ done: true, startDate, endDate }), { headers: corsHeaders });
 
   } catch (err: any) {
     console.error("ct-probe error:", err.message);
