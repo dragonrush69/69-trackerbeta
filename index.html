@@ -627,7 +627,7 @@ async function syncFromCT() {
 }
 
 const EVENT_TYPES = [
-  { id:"epic_chests",   name:"Epic Chests",   frequency:"Weekly",  fields:[{ key:"score",   label:"Epics"   }], autoSync:true, autoSyncClans:["69R","69S"] },
+  { id:"epic_chests",   name:"Epic Squad Chests", frequency:"Weekly",  fields:[{ key:"score",   label:"Epics"   }], autoSyncClans:["69R","69S"] },
   { id:"weekly_chests", name:"Weekly Chests", frequency:"7 days",  fields:[{ key:"points",  label:"Points"  }] },
   { id:"tin_man",       name:"Tin Man",       frequency:"6 days",  fields:[{ key:"points",  label:"Points"  }] },
   { id:"ragnarok",      name:"Ragnarök",      frequency:"25 days", fields:[{ key:"points",  label:"Points"  }] },
@@ -2327,7 +2327,7 @@ const EpicChestsView = ({ clan, event, onBack }) => {
         </div>
       ) : (
         <div style={{ marginBottom:16 }}>
-          <SecHeader title={`Epic Chests · Week ending ${latest.date?.slice(0,10) || ""}`}/>
+          <SecHeader title={`Epic Squad Chests · Week ending ${latest.date?.slice(0,10) || ""}`}/>
           <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
             {playerScores.map(({ player, epics }, i) => (
               <div key={player.id} style={{ backgroundColor:"#fff", borderRadius:10, padding:"10px 14px", display:"flex", alignItems:"center", gap:10, boxShadow:"0 1px 3px rgba(0,0,0,0.05),0 0 0 1px rgba(0,0,0,0.04)" }}>
@@ -3550,35 +3550,91 @@ const TrendsScreen = () => {
               })}
             </div>
 
-            {/* Weekly Chests trend sparkline */}
-            {[{ id:"weekly_chests", label:"Weekly Chests" }].map(({ id, label }) => (
-              <div key={id} style={{ marginBottom:20 }}>
-                <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>{label}</div>
-                {clansToShow.map(c => {
-                  const data = getClanEventTotals(c, id);
-                  const latestTotal = data[data.length-1]?.total;
-                  return (
-                    <div key={c} style={{ backgroundColor:"#fff", borderRadius:12, padding:"12px 14px", marginBottom:8, boxShadow:"0 1px 4px rgba(0,0,0,0.07),0 0 0 1px rgba(0,0,0,0.04)" }}>
-                      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
-                        <span style={{ fontFamily:"'DM Mono',monospace", fontWeight:800, color:CLAN_COLORS[c]||"#1e293b", fontSize:14 }}>{c}</span>
-                        {data.length > 0 && (
-                          <span style={{ fontSize:11, fontWeight:600, color:"#64748b", fontFamily:"'DM Mono',monospace" }}>
-                            {data.length} {data.length===1?"entry":"entries"} · latest {formatScore(latestTotal)}
-                          </span>
-                        )}
-                      </div>
-                      {data.length >= 2 ? (
-                        <Sparkline data={data} color={CLAN_COLORS[c]||"#3b82f6"} height={50}/>
-                      ) : (
-                        <div style={{ height:40, backgroundColor:"#f8fafc", borderRadius:6, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                          <span style={{ fontSize:11, color:"#94a3b8" }}>{data.length===0?"No data yet":"Need 2+ entries for chart"}</span>
-                        </div>
+            {/* Weekly Chests — last 3 weeks bar chart with Y-axis */}
+            <div style={{ marginBottom:20 }}>
+              <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Weekly Chests · Last 3 Weeks</div>
+              {clansToShow.map(c => {
+                const allData = getClanEventTotals(c, "weekly_chests");
+                const data = allData.slice(-3);
+                const maxVal = Math.max(1, ...data.map(d => d.total || 0));
+                const yTicks = 3;
+                const tickStep = Math.ceil(maxVal / yTicks / 1000) * 1000 || 1;
+                const yMax = tickStep * yTicks;
+                const chartH = 80;
+                const yAxisW = 46;
+                const barAreaW = 180;
+                const barW = Math.floor((barAreaW - (data.length+1)*8) / Math.max(data.length,1));
+                return (
+                  <div key={c} style={{ backgroundColor:"#fff", borderRadius:12, padding:"12px 14px", marginBottom:8, boxShadow:"0 1px 4px rgba(0,0,0,0.07),0 0 0 1px rgba(0,0,0,0.04)" }}>
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+                      <span style={{ fontFamily:"'DM Mono',monospace", fontWeight:800, color:CLAN_COLORS[c]||"#1e293b", fontSize:14 }}>{c}</span>
+                      {data.length > 0 && (
+                        <span style={{ fontSize:11, fontWeight:600, color:"#64748b", fontFamily:"'DM Mono',monospace" }}>
+                          latest {formatScore(data[data.length-1]?.total)}
+                        </span>
                       )}
                     </div>
-                  );
-                })}
-              </div>
-            ))}
+                    {data.length === 0 ? (
+                      <div style={{ height:chartH, backgroundColor:"#f8fafc", borderRadius:6, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                        <span style={{ fontSize:11, color:"#94a3b8" }}>No data yet</span>
+                      </div>
+                    ) : (
+                      <div style={{ display:"flex", gap:0 }}>
+                        {/* Y-axis */}
+                        <div style={{ width:yAxisW, height:chartH+20, position:"relative", flexShrink:0 }}>
+                          {Array.from({ length:yTicks+1 }, (_,i) => {
+                            const val = tickStep * (yTicks - i);
+                            const pct = (val / yMax) * 100;
+                            return (
+                              <div key={i} style={{ position:"absolute", top:`${pct}%`, right:4, transform:"translateY(-50%)", fontSize:9, color:"#94a3b8", fontFamily:"'DM Mono',monospace", textAlign:"right", lineHeight:1 }}>
+                                {val >= 1000 ? `${(val/1000).toFixed(val%1000===0?0:1)}k` : val}
+                              </div>
+                            );
+                          })}
+                          {/* horizontal gridlines */}
+                          {Array.from({ length:yTicks+1 }, (_,i) => {
+                            const pct = (i / yTicks) * 100;
+                            return (
+                              <div key={i} style={{ position:"absolute", top:`${pct}%`, left:yAxisW-4, right:-(barAreaW), height:1, backgroundColor:"#f1f5f9" }}/>
+                            );
+                          })}
+                        </div>
+                        {/* Bars + labels */}
+                        <div style={{ flex:1, height:chartH+20, position:"relative" }}>
+                          <div style={{ display:"flex", alignItems:"flex-end", height:chartH, gap:8, paddingLeft:8 }}>
+                            {data.map((d, i) => {
+                              const h = Math.max(2, ((d.total||0) / yMax) * chartH);
+                              const clr = CLAN_COLORS[c] || "#3b82f6";
+                              const isLatest = i === data.length - 1;
+                              return (
+                                <div key={i} style={{ display:"flex", flexDirection:"column", alignItems:"center", flex:1 }}>
+                                  <div style={{ fontSize:9, fontWeight:700, color:clr, fontFamily:"'DM Mono',monospace", marginBottom:2, opacity: isLatest ? 1 : 0.7 }}>
+                                    {(d.total||0) >= 1000 ? `${((d.total||0)/1000).toFixed(1)}k` : d.total||0}
+                                  </div>
+                                  <div style={{ width:"100%", maxWidth:48, height:h, backgroundColor:clr, borderRadius:"3px 3px 0 0", opacity: isLatest ? 1 : 0.5 }}/>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {/* X-axis labels */}
+                          <div style={{ display:"flex", gap:8, paddingLeft:8, marginTop:4 }}>
+                            {data.map((d, i) => {
+                              const isLatest = i === data.length - 1;
+                              const label = d.date ? d.date.slice(5,10) : "";
+                              return (
+                                <div key={i} style={{ flex:1, textAlign:"center", fontSize:9, color: isLatest ? "#475569" : "#94a3b8", fontFamily:"'DM Mono',monospace", fontWeight: isLatest ? 700 : 400 }}>
+                                  {label}{isLatest ? " ▸" : ""}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
 
             {/* Epic Squad Events — per clan, last 3 weeks */}
             <div style={{ marginBottom:20 }}>

@@ -153,65 +153,7 @@ async function streamChestsForClan(
   return { fetched, upserted, skipped };
 }
 
-// ── Week-start computation ────────────────────────────────────────────────────
-
-function computeWeekStart(ts: Date, resetDow: number, resetHour: number): string {
-  const shifted   = new Date(ts.getTime() - resetHour * 3_600_000);
-  const dow       = shifted.getUTCDay();
-  const daysSince = (dow - resetDow + 7) % 7;
-  const d         = new Date(Date.UTC(
-    shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate() - daysSince,
-  ));
-  return d.toISOString().slice(0, 10);
-}
-
-// ── Aggregate chest rows into chests_weekly table ────────────────────────────
-
-async function updateWeeklyTotals(
-  db:        any,
-  nowIso:    string,
-  resetDow:  number,
-  resetHour: number,
-): Promise<void> {
-  const weeklyMap = new Map<string, { player_id: string; clan: string; week_start: string; points: number; synced_at: string }>();
-
-  // Paginate through the entire chests table — a single query hits the 1000-row default limit
-  const PAGE_SIZE = 1000;
-  let offset = 0;
-  while (true) {
-    const { data: chestsData, error: fetchErr } = await db
-      .from("chests")
-      .select("player_id, clan, generated_at, points, quantity")
-      .not("points", "is", null)
-      .range(offset, offset + PAGE_SIZE - 1);
-
-    if (fetchErr) { console.warn("updateWeeklyTotals fetch error:", fetchErr.message); return; }
-
-    for (const row of chestsData ?? []) {
-      if (!row.generated_at || row.points == null) continue;
-      const ws  = computeWeekStart(new Date(row.generated_at), resetDow, resetHour);
-      const key = `${row.player_id}||${row.clan}||${ws}`;
-      if (!weeklyMap.has(key)) {
-        weeklyMap.set(key, { player_id: row.player_id, clan: row.clan, week_start: ws, points: 0, synced_at: nowIso });
-      }
-      weeklyMap.get(key)!.points += (row.points ?? 0) * (row.quantity ?? 1);
-    }
-
-    console.log(`updateWeeklyTotals: page offset=${offset} rows=${(chestsData ?? []).length}`);
-    if ((chestsData ?? []).length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
-  }
-
-  const rows = Array.from(weeklyMap.values());
-  if (rows.length === 0) { console.log("updateWeeklyTotals: no rows to aggregate"); return; }
-
-  const { error: upsertErr } = await db
-    .from("chests_weekly")
-    .upsert(rows, { onConflict: "player_id,clan,week_start" });
-
-  if (upsertErr) console.error("updateWeeklyTotals upsert error:", upsertErr.message);
-  else console.log(`sync-chests: weekly totals — ${rows.length} rows upserted`);
-}
+// chests_weekly and epic_chests are now materialized views refreshed via RPC
 
 // ── Edge Function entry point ─────────────────────────────────────────────────
 
@@ -240,17 +182,6 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
-
-    // ── Read week-reset config ────────────────────────────────────────────────
-    const { data: weekResetRow } = await db
-      .from("config")
-      .select("value")
-      .eq("key", "weekReset")
-      .maybeSingle();
-
-    const weekResetCfg = (weekResetRow?.value ?? {}) as Record<string, any>;
-    const resetDow     = weekResetCfg.dayOfWeek ?? 0;
-    const resetHour    = weekResetCfg.hour      ?? 17;
 
     // ── Backfill mode: POST body options:
     //   { "backfill": true }                          — 13 weeks, up to 2000 pages
@@ -367,10 +298,7 @@ Deno.serve(async (req) => {
       console.log("sync-chests: backfill mode — skipping prune to preserve history");
     }
 
-    // ── Write weekly aggregates ───────────────────────────────────────────────
-    await updateWeeklyTotals(db, nowIso, resetDow, resetHour);
-
-    // ── Refresh epic squad materialized views ─────────────────────────────────
+    // ── Refresh all materialized views ───────────────────────────────────────
     const { error: refreshErr } = await db.rpc("refresh_epic_squad_views");
     if (refreshErr) console.warn("sync-chests: matview refresh error:", refreshErr.message);
     else console.log("sync-chests: epic squad views refreshed");
