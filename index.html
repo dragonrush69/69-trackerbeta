@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "45";
+      var V = "46";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -870,10 +870,7 @@ const Sparkline = ({ data, color="#3b82f6", height=50 }) => {
 const formatScore = val => {
   const n = Number(val);
   if (isNaN(n) || val === "" || val === undefined) return "—";
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
-  if (n >= 10_000)    return (n / 1_000).toFixed(0) + "k";
-  if (n >= 1_000)     return (n / 1_000).toFixed(1) + "k";
-  return String(n);
+  return n.toLocaleString();
 };
 
 const abbrev = name => ({
@@ -3585,7 +3582,7 @@ const TrendsScreen = () => {
                             const pct = (val / yMax) * 100;
                             return (
                               <div key={i} style={{ position:"absolute", top:`${pct}%`, right:4, transform:"translateY(-50%)", fontSize:9, color:"#94a3b8", fontFamily:"'DM Mono',monospace", textAlign:"right", lineHeight:1 }}>
-                                {val >= 1000 ? `${(val/1000).toFixed(val%1000===0?0:1)}k` : val}
+                                {Number(val).toLocaleString()}
                               </div>
                             );
                           })}
@@ -3607,7 +3604,7 @@ const TrendsScreen = () => {
                               return (
                                 <div key={i} style={{ display:"flex", flexDirection:"column", alignItems:"center", flex:1 }}>
                                   <div style={{ fontSize:9, fontWeight:700, color:clr, fontFamily:"'DM Mono',monospace", marginBottom:2, opacity: isLatest ? 1 : 0.7 }}>
-                                    {(d.total||0) >= 1000 ? `${((d.total||0)/1000).toFixed(1)}k` : d.total||0}
+                                    {Number(d.total||0).toLocaleString()}
                                   </div>
                                   <div style={{ width:"100%", maxWidth:48, height:h, backgroundColor:clr, borderRadius:"3px 3px 0 0", opacity: isLatest ? 1 : 0.5 }}/>
                                 </div>
