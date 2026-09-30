@@ -3579,7 +3579,7 @@ const TrendsScreen = () => {
                         <div style={{ width:yAxisW, height:chartH+20, position:"relative", flexShrink:0 }}>
                           {Array.from({ length:yTicks+1 }, (_,i) => {
                             const val = tickStep * (yTicks - i);
-                            const pct = (val / yMax) * 100;
+                            const pct = ((yMax - val) / yMax) * 100;
                             return (
                               <div key={i} style={{ position:"absolute", top:`${pct}%`, right:4, transform:"translateY(-50%)", fontSize:9, color:"#94a3b8", fontFamily:"'DM Mono',monospace", textAlign:"right", lineHeight:1 }}>
                                 {Number(val).toLocaleString()}
