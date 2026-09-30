@@ -301,7 +301,6 @@ async function loadFromSheets() {
     const [
       { data: players },
       { data: configRows },
-      { data: weeklyChests },
       { data: tinManEntries },
       { data: ragnarokEntries },
       { data: darkOmensEntries },
@@ -316,14 +315,13 @@ async function loadFromSheets() {
     ] = await Promise.all([
       db.from("players").select("*"),
       db.from("config").select("*"),
-      db.from("chests_weekly").select("*").order("week_start", { ascending: false }),
       db.from("tournament_entries").select("*").eq("tournament_type", "Rise Of The Ancients").order("tournament_date", { ascending: false }),
       db.from("tournament_entries").select("*").eq("tournament_type", "Ragnarok").order("tournament_date", { ascending: false }),
       // Omens: essence from "Dark Omens", damage from "Remnants Of Dread" tournament scores
       db.from("tournament_entries").select("*").eq("tournament_type", "Dark Omens").order("tournament_date", { ascending: false }),
       db.from("tournament_entries").select("*").eq("tournament_type", "Remnants Of Dread").order("tournament_date", { ascending: false }),
       db.from("tournament_entries").select("*").eq("tournament_type", "Trials Of Olympus").order("tournament_date", { ascending: false }),
-      db.from("epic_chests").select("*").order("week_start", { ascending: false }),
+      db.from("epic_squad_scores").select("*").order("week_start", { ascending: false }),
       db.from("level_requests").select("*").order("date", { ascending: false }),
       db.from("rotation_log").select("*").order("date", { ascending: false }),
       db.from("fragment_distributions").select("*").order("date", { ascending: false }),
@@ -333,10 +331,10 @@ async function loadFromSheets() {
       db.from("chests").select("player_id, clan, generated_at, quantity").in("chest_source", ["Epic Chimera Squad", "Epic Basilisk squad", "Epic Briareus Squad"]),
     ]);
 
-    // Fetch epic squad breakdown separately so a timeout can't break the main load
+    // Fetch epic squad event breakdown (per event, per day — from chests table via matview)
     let epicSquadEvents = [];
     try {
-      const { data: esd } = await db.from("epic_squad_by_event").select("chest_name, clan, player_id, total_chests").limit(5000);
+      const { data: esd } = await db.from("epic_squad_by_event").select("chest_name, clan, player_id, total_chests, week_start").limit(5000);
       epicSquadEvents = esd || [];
     } catch (e) {
       console.warn("epic_squad_by_event fetch failed:", e);
@@ -350,7 +348,7 @@ async function loadFromSheets() {
     const scores = {};
     ["69R", "69S", "69D"].forEach(clan => {
       const cl = rows => (rows || []).filter(r => r.clan === clan);
-      scores[clan + "_weekly_chests"] = buildScoreEntries(cl(weeklyChests), { points: "points" });
+      scores[clan + "_weekly_chests"] = buildScoreEntries(cl(epicChests), { points: "total_points" });
       // Resolve player_id by name when CT ids don't match Supabase ids
       const nameToId = {};
       (players || []).forEach(p => { if (p.name && p.id) nameToId[p.name.trim().toLowerCase()] = String(p.id); });
@@ -416,7 +414,7 @@ async function loadFromSheets() {
              ?? r.meta?.chests ?? 0,
       }));
       scores[clan + "_olympus"] = buildScoreEntries(patchedOlympus, { score:"score", chests:"chests" });
-      scores[clan + "_epic_chests"]   = buildScoreEntries(cl(epicChests),   { score:"total_score" });
+      scores[clan + "_epic_chests"]   = buildScoreEntries(cl(epicChests),   { score:"total_chests" });
     });
 
     // Map players to frontend format
@@ -6480,7 +6478,7 @@ function App() {
       window._appData = data;
       // Load epic squad events (last 3 weeks) — separate fetch so it can't block main load
       const _essCutoff = new Date(Date.now() - 18 * 24 * 60 * 60 * 1000).toISOString();
-      db.from("epic_squad_weekly").select("chest_name, clan, player_id, total_chests, week_start").gte("week_start", _essCutoff).limit(10000)
+      db.from("epic_squad_by_event").select("chest_name, clan, player_id, total_chests, week_start").gte("week_start", _essCutoff).limit(10000)
         .then(({ data: esd, error: esErr }) => {
           if (esErr) console.warn("[EpicSquad] fetch error:", esErr);
           window._appData.epicSquadEvents = esd || [];
