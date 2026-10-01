@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "48";
+      var V = "49";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -2982,6 +2982,7 @@ const EPIC_PALETTE = ["#7c3aed","#2563eb","#16a34a","#d97706","#dc2626","#0891b2
 const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
   const [drilldown,   setDrilldown]   = useState(null); // { run, clan }
   const [filterEvent, setFilterEvent] = useState("");   // "" = all, or specific event name
+  const scrollRefs = React.useRef({});
 
   // Pull epic squad rows from daily_chest_breakdown
   const rows = (window._appData?.dailyBreakdown || [])
@@ -3096,8 +3097,9 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                       </div>
                     ))}
                   </div>
-                  {/* Scrollable bar area */}
-                  <div style={{ flex:1, overflowX:"auto", position:"relative" }}>
+                  {/* Scrollable bar area — auto-scrolls to newest (rightmost) bar */}
+                  <div ref={el => { if (el) { scrollRefs.current[clan] = el; el.scrollLeft = el.scrollWidth; } }}
+                       style={{ flex:1, overflowX:"auto", position:"relative" }}>
                     <div style={{ position:"absolute", top:0, left:0, right:0, height:BAR_H, pointerEvents:"none", zIndex:0 }}>
                       {[0, 0.25, 0.5, 0.75, 1].map(pct => (
                         <div key={pct} style={{ position:"absolute", left:0, right:0,
@@ -3377,7 +3379,7 @@ const TrendsScreen = () => {
                     ) : (
                       <div style={{ display:"flex", gap:0 }}>
                         {/* Y-axis */}
-                        <div style={{ width:yAxisW, height:chartH+20, position:"relative", flexShrink:0 }}>
+                        <div style={{ width:yAxisW, height:chartH, position:"relative", flexShrink:0 }}>
                           {Array.from({ length:yTicks+1 }, (_,i) => {
                             const val = tickStep * (yTicks - i);
                             const pct = ((yMax - val) / yMax) * 100;
@@ -3396,7 +3398,7 @@ const TrendsScreen = () => {
                           })}
                         </div>
                         {/* Bars + labels */}
-                        <div style={{ flex:1, height:chartH+20, position:"relative" }}>
+                        <div style={{ flex:1, height:chartH, position:"relative" }}>
                           <div style={{ display:"flex", alignItems:"flex-end", height:chartH, gap:8, paddingLeft:8 }}>
                             {data.map((d, i) => {
                               const h = Math.max(2, ((d.total||0) / yMax) * chartH);
