@@ -7,7 +7,7 @@
     // On the next pull-to-refresh, browsers navigate to a versioned URL (?dv=X),
     // which is never in cache, so they always fetch the latest HTML.
     (function() {
-      var V = "47";
+      var V = "48";
       var p = new URLSearchParams(location.search);
       if (p.get("dv") !== V) {
         p.set("dv", V);
@@ -3006,7 +3006,8 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
     byDay[r.clan][r.date] = { total: Number(r.total_chests) || 0, eventName: getEventName(r) };
   });
 
-  // Build runs: consecutive days with same eventName merged into one bar
+  // Build runs: consecutive days with same eventName merged into one bar.
+  // Unknown days (eventName === null) are never merged — each shows as its own bar.
   const buildRuns = (clan) => {
     const days = Object.keys(byDay[clan] || {}).sort();
     const runs = [];
@@ -3014,7 +3015,7 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
     days.forEach(day => {
       const { total, eventName } = byDay[clan][day] || {};
       if (!total) return;
-      if (cur && cur.eventName === eventName) {
+      if (cur && cur.eventName !== null && cur.eventName === eventName) {
         cur.endDay = day;
         cur.days.push(day);
         cur.runTotal += total;
