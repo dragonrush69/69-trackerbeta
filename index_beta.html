@@ -4034,7 +4034,25 @@ const TrendsScreen = () => {
               })}
             </div>
 
-            {/* Weekly Chests — last 3 weeks bar chart with Y-axis */}
+            {/* Epic Squad vs Epic Crypt reward comparison — first */}
+            <div style={{ marginBottom:20 }}>
+              <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Epic Squad vs Epic Crypt · Rewards</div>
+              <ChestTypeComparisonChart clansToShow={clansToShow}/>
+            </div>
+
+            {/* Epic Squad Events — per clan, last 18 days */}
+            <div style={{ marginBottom:20 }}>
+              <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Epic Squad Events · Last 18 Days</div>
+              <EpicSquadChart clansToShow={clansToShow}/>
+            </div>
+
+            {/* Daily Chest Rewards — gold, silver, tar epic per clan */}
+            <div style={{ marginBottom:20 }}>
+              <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Daily Chest Rewards · Last 7 Days</div>
+              <DailyRewardsCard clansToShow={clansToShow}/>
+            </div>
+
+            {/* Weekly Chests — moved to bottom */}
             <div style={{ marginBottom:20 }}>
               <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Weekly Chests · Last 3 Weeks</div>
               {clansToShow.map(c => {
@@ -4120,23 +4138,6 @@ const TrendsScreen = () => {
               })}
             </div>
 
-            {/* Epic Squad Events — per clan, last 3 weeks */}
-            <div style={{ marginBottom:20 }}>
-              <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Epic Squad Events · Last 18 Days</div>
-              <EpicSquadChart clansToShow={clansToShow}/>
-            </div>
-
-            {/* Epic Squad vs Epic Crypt reward comparison */}
-            <div style={{ marginBottom:20 }}>
-              <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Epic Squad vs Epic Crypt · Rewards</div>
-              <ChestTypeComparisonChart clansToShow={clansToShow}/>
-            </div>
-
-            {/* Daily Chest Rewards — gold, silver, tar epic per clan */}
-            <div style={{ marginBottom:20 }}>
-              <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Daily Chest Rewards · Last 7 Days</div>
-              <DailyRewardsCard clansToShow={clansToShow}/>
-            </div>
           </>
         );
       })()}
