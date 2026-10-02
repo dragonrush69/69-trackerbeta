@@ -311,7 +311,7 @@ async function loadFromSheets() {
       { data: rotationLog },
       { data: fragmentDists },
       { data: arcaneEpicRows },
-      { data: olympusChestRows },
+      { data: olympusEpicRows },
     ] = await Promise.all([
       db.from("players").select("*"),
       db.from("config").select("*"),
@@ -329,8 +329,10 @@ async function loadFromSheets() {
       db.from("daily_player_epic").select("date, clan, player_id, chests")
         .ilike("event_name", "%arcanomancer%")
         .gte("date", new Date(Date.now() - 90*24*60*60*1000).toISOString().slice(0,10)),
-      // Olympus chests: Chimera (Day 1) + Basilisk (Day 2) + Briareus (Day 5) — summed per player per event
-      db.from("chests").select("player_id, clan, generated_at, quantity").in("chest_source", ["Epic Chimera Squad", "Epic Basilisk squad", "Epic Briareus Squad"]),
+      // Olympus chests: Chimera (Day 1) + Basilisk (Day 2) + Briareus (Day 5) from daily_player_epic
+      db.from("daily_player_epic").select("date, clan, player_id, chests")
+        .or("event_name.ilike.%chimera%,event_name.ilike.%basilisk%,event_name.ilike.%briareus%")
+        .gte("date", new Date(Date.now() - 90*24*60*60*1000).toISOString().slice(0,10)),
     ]);
 
     // Fetch epic squad event breakdown (per event, per day — from chests table via matview)
@@ -418,8 +420,20 @@ async function loadFromSheets() {
       });
       scores[clan + "_omens"] = buildScoreEntries(cl(patchedOmens), { essence:"essence", damage:"damage", chests:"chests" });
 
-      // Olympus: points from tournament_entries, chests from chests table
-      const olympusChestMap = buildEventChestMap(olympusChestRows, olympusEntries, "tournament_date");
+      // Olympus: points from tournament_entries, chests = Chimera+Basilisk+Briareus from daily_player_epic
+      const olympusChestMap = {};
+      const _olympusEventDates = [...new Set((olympusEntries || []).map(r => r.tournament_date))];
+      (olympusEpicRows || []).forEach(row => {
+        if (!row.player_id || !row.date) return;
+        const rowTime = new Date(row.date).getTime();
+        for (const evDate of _olympusEventDates) {
+          if (Math.abs(rowTime - new Date(evDate).getTime()) <= _TEN_DAYS_MS) {
+            const key = row.clan + "||" + evDate + "||" + row.player_id;
+            olympusChestMap[key] = (olympusChestMap[key] || 0) + (row.chests || 0);
+            break;
+          }
+        }
+      });
       const patchedOlympus = cl(patchTournRows(olympusEntries)).map(r => ({
         ...r,
         score:  r.points ?? 0,
