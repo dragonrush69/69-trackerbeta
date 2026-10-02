@@ -6391,24 +6391,37 @@ function App() {
       // Load daily_player_epic (last 30 days) + event display names config in parallel
       const _breakdownCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
       console.log("[DailyPlayerEpic] fetching from", _breakdownCutoff);
-      Promise.all([
-        db.from("daily_player_epic").select("date, clan, player_id, player_name, event_name, chests")
-          .gte("date", _breakdownCutoff).order("date", { ascending: true }).limit(10000),
-        db.from("config").select("value").eq("key", "eventDisplayNames").single(),
-      ]).then(function(results) {
-          var res = results[0]; var cfgRes = results[1];
-          if (res.error) {
-            console.warn("[DailyPlayerEpic] fetch error:", res.error);
-            window._appData.dailyPlayerEpicError = res.error.message || String(res.error);
-          } else {
+      // Paginate daily_player_epic — Supabase caps at 1000 rows per request
+      (async function fetchAllEpicRows() {
+        try {
+          const PAGE = 1000;
+          let allEpicRows = [];
+          let from = 0;
+          while (true) {
+            const { data: page, error } = await db
+              .from("daily_player_epic")
+              .select("date, clan, player_id, player_name, event_name, chests")
+              .gte("date", _breakdownCutoff)
+              .order("date", { ascending: true })
+              .range(from, from + PAGE - 1);
+            if (error) {
+              console.warn("[DailyPlayerEpic] fetch error:", error);
+              window._appData.dailyPlayerEpicError = error.message || String(error);
+              break;
+            }
             window._appData.dailyPlayerEpicError = null;
+            allEpicRows = allEpicRows.concat(page || []);
+            console.log("[DailyPlayerEpic] page from=" + from + " got=" + (page||[]).length + " total=" + allEpicRows.length);
+            if (!page || page.length < PAGE) break; // last page
+            from += PAGE;
           }
-          window._appData.dailyPlayerEpic = res.data || [];
+          window._appData.dailyPlayerEpic = allEpicRows;
+          const cfgRes = await db.from("config").select("value").eq("key", "eventDisplayNames").single();
           window._appData.eventDisplayNames = cfgRes?.data?.value || {};
-          console.log("[DailyPlayerEpic] rows:", window._appData.dailyPlayerEpic.length, "| eventDisplayNames keys:", Object.keys(window._appData.eventDisplayNames).length);
+          console.log("[DailyPlayerEpic] total rows:", allEpicRows.length);
           setDataVersion(function(v){ return v + 1; });
-        })
-        .catch(function(e){ console.error("[DailyBreakdown] threw:", e); });
+        } catch(e) { console.error("[DailyPlayerEpic] threw:", e); }
+      })();
       // Debug: log score structure so we can diagnose display issues
       const scoreKeys = Object.keys(data.scores || {});
       const firstKey  = scoreKeys[0];
