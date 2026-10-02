@@ -1579,6 +1579,207 @@ const PlayerForm = ({ player, onDone }) => {
 };
 
 // ─── PLAYER DETAIL ────────────────────────────────────────────────────────────
+// ─── MANUAL EVENT CARD ────────────────────────────────────────────────────────
+// Shown on the player card for events with sync_type = 'manual' or 'both'.
+// Lets the player upload a screenshot inline and saves to player_score_submissions.
+const ManualEventCard = ({ cfg, player }) => {
+  const allSubs = (window._appData?.scoreSubmissions || [])
+    .filter(s => s.player_id === player.id &&
+                 (s.event_id === cfg.id || s.event_name === cfg.display_name));
+  const subs = allSubs.slice(0, 3);
+
+  const [uploading,    setUploading]    = useState(false);
+  const [imagePreview, setImagePreview] = useState(null);
+  const [imageFile,    setImageFile]    = useState(null);
+  const [processing,   setProcessing]   = useState(false);
+  const [extracted,    setExtracted]    = useState(null);
+  const [err,          setErr]          = useState("");
+  const [saved,        setSaved]        = useState(false);
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  const handleImage = e => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImageFile(file);
+    setExtracted(null); setErr(""); setSaved(false);
+    const reader = new FileReader();
+    reader.onload = ev => setImagePreview(ev.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const handleProcess = async () => {
+    if (!imageFile) return;
+    setProcessing(true); setErr(""); setExtracted(null);
+    try {
+      const base64 = imagePreview.split(",")[1];
+      const res = await fetch(PROCESS_SS_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image_base64: base64,
+          image_type:   imageFile.type || "image/jpeg",
+          player_name:  player.name,
+          event_name:   cfg.display_name,
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) { setErr(data.error || "Couldn't read screenshot."); setProcessing(false); return; }
+      setExtracted(data);
+    } catch(e) { setErr("Something went wrong. Please try again."); }
+    setProcessing(false);
+  };
+
+  const handleSave = async () => {
+    if (!extracted) return;
+    setProcessing(true);
+    const { error } = await db.from("player_score_submissions").insert({
+      player_id:       player.id,
+      player_name:     player.name,
+      clan:            player.clan,
+      event_id:        cfg.id,
+      event_name:      cfg.display_name,
+      event_date:      today,
+      extracted_name:  extracted.name,
+      extracted_score: extracted.score,
+      score:           extracted.score,
+      status:          "approved",
+      notes:           extracted.notes || null,
+    });
+    setProcessing(false);
+    if (error) { setErr("Save failed: " + error.message); return; }
+    // Add to local cache so it shows immediately without reload
+    if (window._appData?.scoreSubmissions) {
+      window._appData.scoreSubmissions.unshift({
+        player_id: player.id, clan: player.clan,
+        event_id: cfg.id, event_name: cfg.display_name,
+        event_date: today, score: extracted.score, status: "approved",
+      });
+    }
+    setSaved(true); setUploading(false);
+    setImageFile(null); setImagePreview(null); setExtracted(null);
+  };
+
+  const cancel = () => { setUploading(false); setImageFile(null); setImagePreview(null); setExtracted(null); setErr(""); setSaved(false); };
+
+  return (
+    <Card>
+      {/* Header */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+        <div>
+          <span style={{ fontSize:14, fontWeight:700, color:"#1e293b" }}>{cfg.display_name}</span>
+          <span style={{ marginLeft:8, fontSize:10, fontWeight:700, color:"#7c3aed",
+                         backgroundColor:"#7c3aed18", border:"1px solid #7c3aed33",
+                         borderRadius:6, padding:"2px 6px", textTransform:"uppercase" }}>Manual</span>
+        </div>
+        {!uploading && (
+          <button onClick={() => { setUploading(true); setSaved(false); }}
+            style={{ padding:"5px 12px", borderRadius:8, border:"none", fontSize:11, fontWeight:700,
+                     cursor:"pointer", backgroundColor:"#7c3aed", color:"#fff" }}>
+            + Upload Score
+          </button>
+        )}
+      </div>
+
+      {/* Past submissions */}
+      {subs.length === 0 && !uploading && (
+        <p style={{ fontSize:13, color:"#cbd5e1", margin:0, fontStyle:"italic" }}>No scores submitted yet</p>
+      )}
+      {subs.length > 0 && (
+        <>
+          <div style={{ display:"grid", gridTemplateColumns:"80px repeat(3, 1fr)", gap:4, marginBottom:4 }}>
+            <div/>
+            {subs.map((s, i) => (
+              <div key={i} style={{ textAlign:"center", fontSize:9, color:"#94a3b8", fontWeight:600, fontFamily:"'DM Mono',monospace" }}>
+                {i === 0 ? "Latest" : new Date(s.event_date + "T12:00:00Z").toLocaleDateString("en-GB", { day:"numeric", month:"short" })}
+              </div>
+            ))}
+            {Array.from({ length: Math.max(0, 3 - subs.length) }).map((_,i) => <div key={i}/>)}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"80px repeat(3, 1fr)", gap:4, alignItems:"center", padding:"4px 0", borderTop:"1px solid #f1f5f9" }}>
+            <div style={{ fontSize:10, color:"#94a3b8", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.04em" }}>Score</div>
+            {subs.map((s, i) => (
+              <div key={i} style={{ textAlign:"center" }}>
+                <span style={{ fontSize:11, fontWeight:700, color:i===0?"#1e293b":"#94a3b8", fontFamily:"'DM Mono',monospace" }}>
+                  {Number(s.score).toLocaleString()}
+                </span>
+              </div>
+            ))}
+            {Array.from({ length: Math.max(0, 3 - subs.length) }).map((_,i) => (
+              <div key={i} style={{ textAlign:"center" }}><span style={{ fontSize:12, color:"#cbd5e1", fontFamily:"'DM Mono',monospace" }}>—</span></div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Upload flow */}
+      {uploading && (
+        <div style={{ marginTop:10, padding:"12px", backgroundColor:"#faf5ff", borderRadius:10, border:"1.5px solid #e9d5ff" }}>
+          {!extracted ? (
+            <>
+              <label style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:6, padding:"14px",
+                              border:"2px dashed #c4b5fd", borderRadius:10, cursor:"pointer",
+                              backgroundColor: imagePreview ? "#f5f3ff" : "#fefeff" }}>
+                {imagePreview
+                  ? <img src={imagePreview} alt="preview" style={{ maxWidth:"100%", maxHeight:160, borderRadius:8, objectFit:"contain" }}/>
+                  : <>
+                      <div style={{ fontSize:28 }}>📸</div>
+                      <div style={{ fontSize:12, fontWeight:600, color:"#7c3aed" }}>Tap to choose screenshot</div>
+                    </>
+                }
+                <input type="file" accept="image/*" onChange={handleImage} style={{ display:"none" }}/>
+              </label>
+              {err && <div style={{ color:"#dc2626", fontSize:12, fontWeight:600, marginTop:8 }}>{err}</div>}
+              <div style={{ display:"flex", gap:8, marginTop:10 }}>
+                <button onClick={cancel}
+                  style={{ flex:1, padding:"9px", borderRadius:9, border:"1px solid #e2e8f0", fontSize:12, fontWeight:600, cursor:"pointer", backgroundColor:"#fff", color:"#475569" }}>
+                  Cancel
+                </button>
+                <button onClick={handleProcess} disabled={!imageFile || processing}
+                  style={{ flex:2, padding:"9px", borderRadius:9, border:"none", fontSize:12, fontWeight:700,
+                           cursor:(!imageFile||processing)?"not-allowed":"pointer",
+                           backgroundColor:(!imageFile||processing)?"#e2e8f0":"#7c3aed",
+                           color:(!imageFile||processing)?"#94a3b8":"#fff" }}>
+                  {processing ? "Analysing…" : "Analyse Screenshot"}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize:11, color:"#7c3aed", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:8 }}>Score found</div>
+              <div style={{ display:"flex", gap:8, marginBottom:10 }}>
+                <div style={{ flex:1, backgroundColor:"#fff", borderRadius:8, padding:"8px 10px" }}>
+                  <div style={{ fontSize:9, color:"#94a3b8", fontWeight:700, textTransform:"uppercase", marginBottom:2 }}>Name</div>
+                  <div style={{ fontSize:12, fontWeight:700, color:"#1e293b" }}>{extracted.name}</div>
+                </div>
+                <div style={{ flex:1, backgroundColor:"#fff", borderRadius:8, padding:"8px 10px" }}>
+                  <div style={{ fontSize:9, color:"#94a3b8", fontWeight:700, textTransform:"uppercase", marginBottom:2 }}>Score</div>
+                  <div style={{ fontSize:16, fontWeight:800, color:"#7c3aed", fontFamily:"'DM Mono',monospace" }}>{Number(extracted.score).toLocaleString()}</div>
+                </div>
+              </div>
+              {err && <div style={{ color:"#dc2626", fontSize:12, fontWeight:600, marginBottom:8 }}>{err}</div>}
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={() => { setExtracted(null); setErr(""); }}
+                  style={{ flex:1, padding:"9px", borderRadius:9, border:"1px solid #e2e8f0", fontSize:12, fontWeight:600, cursor:"pointer", backgroundColor:"#fff", color:"#475569" }}>
+                  ← Retake
+                </button>
+                <button onClick={handleSave} disabled={processing}
+                  style={{ flex:2, padding:"9px", borderRadius:9, border:"none", fontSize:12, fontWeight:700,
+                           cursor:processing?"not-allowed":"pointer",
+                           backgroundColor:processing?"#e2e8f0":"#16a34a", color:processing?"#94a3b8":"#fff" }}>
+                  {processing ? "Saving…" : "✓ Confirm & Save"}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {saved && <div style={{ marginTop:8, fontSize:12, color:"#16a34a", fontWeight:700 }}>✓ Score saved!</div>}
+    </Card>
+  );
+};
+
 const PlayerDetail = ({ player, onBack }) => {
   const { role } = useSession();
   const forceUpdate = useForceUpdate();
@@ -1784,57 +1985,11 @@ const PlayerDetail = ({ player, onBack }) => {
           .filter(r => r.clan === player.clan && r.active && r.show_on_player_card &&
                        (r.sync_type === "manual" || r.sync_type === "both"));
         if (manualCfg.length === 0) return null;
-
-        const allSubs = (window._appData?.scoreSubmissions || [])
-          .filter(s => s.player_id === player.id && s.clan === player.clan);
-
         return (
           <div style={{ display:"flex", flexDirection:"column", gap:12, marginTop:12 }}>
-            {manualCfg.map(cfg => {
-              const subs = allSubs
-                .filter(s => s.event_id === cfg.id || s.event_name === cfg.display_name)
-                .slice(0, 3);
-              return (
-                <Card key={cfg.id}>
-                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
-                    <div>
-                      <span style={{ fontSize:14, fontWeight:700, color:"#1e293b" }}>{cfg.display_name}</span>
-                      <span style={{ marginLeft:8, fontSize:10, fontWeight:700, color:"#7c3aed",
-                                     backgroundColor:"#7c3aed18", border:"1px solid #7c3aed33",
-                                     borderRadius:6, padding:"2px 6px", textTransform:"uppercase" }}>Manual</span>
-                    </div>
-                  </div>
-                  {subs.length === 0 ? (
-                    <p style={{ fontSize:13, color:"#cbd5e1", margin:0, fontStyle:"italic" }}>No scores submitted yet</p>
-                  ) : (
-                    <>
-                      <div style={{ display:"grid", gridTemplateColumns:"80px repeat(3, 1fr)", gap:4, marginBottom:4 }}>
-                        <div/>
-                        {subs.map((s, i) => (
-                          <div key={i} style={{ textAlign:"center", fontSize:9, color:"#94a3b8", fontWeight:600, fontFamily:"'DM Mono',monospace" }}>
-                            {i === 0 ? "Latest" : new Date(s.event_date + "T12:00:00Z").toLocaleDateString("en-GB", { day:"numeric", month:"short" })}
-                          </div>
-                        ))}
-                        {Array.from({ length: Math.max(0, 3 - subs.length) }).map((_,i) => <div key={i}/>)}
-                      </div>
-                      <div style={{ display:"grid", gridTemplateColumns:"80px repeat(3, 1fr)", gap:4, alignItems:"center", padding:"4px 0", borderTop:"1px solid #f1f5f9" }}>
-                        <div style={{ fontSize:10, color:"#94a3b8", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.04em" }}>Score</div>
-                        {subs.map((s, i) => (
-                          <div key={i} style={{ textAlign:"center" }}>
-                            <span style={{ fontSize:11, fontWeight:700, color:i===0?"#1e293b":"#94a3b8", fontFamily:"'DM Mono',monospace" }}>
-                              {Number(s.score).toLocaleString()}
-                            </span>
-                          </div>
-                        ))}
-                        {Array.from({ length: Math.max(0, 3 - subs.length) }).map((_,i) => (
-                          <div key={i} style={{ textAlign:"center" }}><span style={{ fontSize:12, color:"#cbd5e1", fontFamily:"'DM Mono',monospace" }}>—</span></div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </Card>
-              );
-            })}
+            {manualCfg.map(cfg => (
+              <ManualEventCard key={cfg.id} cfg={cfg} player={player}/>
+            ))}
           </div>
         );
       })()}
