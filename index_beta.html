@@ -5693,6 +5693,163 @@ const NormsAdminView = ({ onBack }) => {
 };
 
 // ─── ADMIN SCREEN ─────────────────────────────────────────────────────────────
+// ─── ADMIN EVENT CONFIG ───────────────────────────────────────────────────────
+const SYNC_TYPES = ["auto", "manual", "both"];
+const SYNC_COLOURS = { auto:"#2563eb", manual:"#7c3aed", both:"#16a34a" };
+
+const AdminEventConfig = () => {
+  const [rows,       setRows]       = useState(null); // null = loading
+  const [saving,     setSaving]     = useState({});
+  const [adding,     setAdding]     = useState(false);
+  const [newRow,     setNewRow]     = useState({ id:"", clan:"69R", display_name:"", frequency:"", sync_type:"manual", show_on_player_card:true, active:true, display_order:99 });
+  const [addErr,     setAddErr]     = useState("");
+  const [filterClan, setFilterClan] = useState("69R");
+
+  const load = async () => {
+    const { data } = await db.from("event_config").select("*").order("clan").order("display_order");
+    setRows(data || []);
+  };
+
+  React.useEffect(() => { load(); }, []);
+
+  const update = async (id, clan, field, value) => {
+    const key = id + clan + field;
+    setSaving(s => ({ ...s, [key]: true }));
+    await db.from("event_config").update({ [field]: value }).eq("id", id).eq("clan", clan);
+    setRows(r => r.map(x => x.id === id && x.clan === clan ? { ...x, [field]: value } : x));
+    setSaving(s => { const n = { ...s }; delete n[key]; return n; });
+  };
+
+  const addEvent = async () => {
+    setAddErr("");
+    if (!newRow.id.trim() || !newRow.display_name.trim()) { setAddErr("ID and name are required."); return; }
+    const toInsert = { ...newRow, id: newRow.id.trim().toLowerCase().replace(/\s+/g,"_") };
+    const { error } = await db.from("event_config").insert(toInsert);
+    if (error) { setAddErr(error.message); return; }
+    setAdding(false);
+    setNewRow({ id:"", clan:"69R", display_name:"", frequency:"", sync_type:"manual", show_on_player_card:true, active:true, display_order:99 });
+    load();
+  };
+
+  const toggle = (label, checked, onChange) => (
+    <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}>
+      <div onClick={onChange} style={{
+        width:36, height:20, borderRadius:10, position:"relative", cursor:"pointer",
+        backgroundColor: checked ? "#1e293b" : "#e2e8f0", transition:"background 0.2s",
+      }}>
+        <div style={{
+          position:"absolute", top:2, left: checked ? 18 : 2, width:16, height:16,
+          borderRadius:8, backgroundColor:"#fff", transition:"left 0.2s",
+          boxShadow:"0 1px 3px rgba(0,0,0,0.2)",
+        }}/>
+      </div>
+      <span style={{ fontSize:11, color:"#475569", fontWeight:600 }}>{label}</span>
+    </label>
+  );
+
+  const visible = (rows || []).filter(r => r.clan === filterClan);
+
+  return (
+    <div>
+      {/* Clan filter */}
+      <div style={{ display:"flex", gap:6, marginBottom:12 }}>
+        {CLANS.map(c => (
+          <button key={c} onClick={() => setFilterClan(c)}
+            style={{ padding:"5px 14px", borderRadius:16, border:"none", fontSize:12, fontWeight:700, cursor:"pointer",
+                     backgroundColor: filterClan===c ? (CLAN_COLORS[c]||"#1e293b") : "#f1f5f9",
+                     color: filterClan===c ? "#fff" : "#475569" }}>{c}</button>
+        ))}
+      </div>
+
+      {rows === null && <div style={{ color:"#94a3b8", fontSize:13, padding:"8px 0" }}>Loading…</div>}
+
+      {visible.map(row => (
+        <div key={row.id + row.clan} style={{ backgroundColor:"#fff", borderRadius:12, padding:"12px 14px", marginBottom:8,
+               boxShadow:"0 1px 4px rgba(0,0,0,0.06),0 0 0 1px rgba(0,0,0,0.04)" }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+            <div>
+              <span style={{ fontSize:14, fontWeight:700, color:"#1e293b" }}>{row.display_name}</span>
+              {row.frequency && <span style={{ fontSize:11, color:"#94a3b8", marginLeft:6 }}>· {row.frequency}</span>}
+            </div>
+            <span style={{ fontSize:10, fontWeight:700, color: SYNC_COLOURS[row.sync_type]||"#64748b",
+                           backgroundColor:(SYNC_COLOURS[row.sync_type]||"#64748b")+"18",
+                           border:`1px solid ${(SYNC_COLOURS[row.sync_type]||"#64748b")}33`,
+                           borderRadius:6, padding:"2px 8px", textTransform:"uppercase", letterSpacing:"0.05em" }}>
+              {row.sync_type}
+            </span>
+          </div>
+
+          <div style={{ display:"flex", flexWrap:"wrap", gap:12, alignItems:"center" }}>
+            {toggle("Show on player card", row.show_on_player_card, () => update(row.id, row.clan, "show_on_player_card", !row.show_on_player_card))}
+            {toggle("Active", row.active, () => update(row.id, row.clan, "active", !row.active))}
+
+            {/* Sync type picker */}
+            <div style={{ display:"flex", gap:4 }}>
+              {SYNC_TYPES.map(t => (
+                <button key={t} onClick={() => update(row.id, row.clan, "sync_type", t)}
+                  style={{ padding:"3px 10px", borderRadius:8, border:"none", fontSize:10, fontWeight:700, cursor:"pointer", textTransform:"uppercase",
+                           backgroundColor: row.sync_type===t ? (SYNC_COLOURS[t]||"#64748b") : "#f1f5f9",
+                           color: row.sync_type===t ? "#fff" : "#94a3b8" }}>{t}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {/* Add new event */}
+      {!adding ? (
+        <button onClick={() => setAdding(true)}
+          style={{ width:"100%", padding:"11px", borderRadius:12, border:"1.5px dashed #cbd5e1", fontSize:13, fontWeight:600,
+                   cursor:"pointer", backgroundColor:"#fafafe", color:"#64748b", marginTop:4 }}>
+          + Add event for {filterClan}
+        </button>
+      ) : (
+        <div style={{ backgroundColor:"#fff", borderRadius:12, padding:"14px", marginTop:4,
+                      boxShadow:"0 1px 4px rgba(0,0,0,0.06),0 0 0 1px rgba(0,0,0,0.04)" }}>
+          <div style={{ fontSize:12, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>
+            New Event — {filterClan}
+          </div>
+          {[
+            { label:"Event ID (no spaces, e.g. rise_of_ancients)", field:"id",           type:"text" },
+            { label:"Display Name",                                 field:"display_name", type:"text" },
+            { label:"Frequency (e.g. Monthly)",                     field:"frequency",    type:"text" },
+            { label:"Display Order",                                field:"display_order",type:"number" },
+          ].map(({ label, field, type }) => (
+            <div key={field} style={{ marginBottom:8 }}>
+              <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", marginBottom:3 }}>{label}</div>
+              <input type={type} value={newRow[field]} onChange={e => setNewRow(r => ({ ...r, [field]: type==="number" ? Number(e.target.value) : e.target.value }))}
+                style={{ width:"100%", boxSizing:"border-box", padding:"8px 10px", borderRadius:8, border:"1.5px solid #e2e8f0", fontSize:13, outline:"none" }}/>
+            </div>
+          ))}
+          {/* Sync type */}
+          <div style={{ marginBottom:10 }}>
+            <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", marginBottom:6 }}>Sync Type</div>
+            <div style={{ display:"flex", gap:6 }}>
+              {SYNC_TYPES.map(t => (
+                <button key={t} onClick={() => setNewRow(r => ({ ...r, sync_type: t }))}
+                  style={{ padding:"5px 12px", borderRadius:8, border:"none", fontSize:11, fontWeight:700, cursor:"pointer", textTransform:"uppercase",
+                           backgroundColor: newRow.sync_type===t ? (SYNC_COLOURS[t]||"#64748b") : "#f1f5f9",
+                           color: newRow.sync_type===t ? "#fff" : "#94a3b8" }}>{t}</button>
+              ))}
+            </div>
+          </div>
+          {addErr && <div style={{ color:"#dc2626", fontSize:12, fontWeight:600, marginBottom:8 }}>{addErr}</div>}
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={() => { setAdding(false); setAddErr(""); }}
+              style={{ flex:1, padding:"10px", borderRadius:10, border:"1.5px solid #e2e8f0", fontSize:13, fontWeight:600, cursor:"pointer", backgroundColor:"#fff", color:"#475569" }}>
+              Cancel
+            </button>
+            <button onClick={() => { setNewRow(r => ({ ...r, clan: filterClan })); addEvent(); }}
+              style={{ flex:2, padding:"10px", borderRadius:10, border:"none", fontSize:13, fontWeight:700, cursor:"pointer", backgroundColor:"#1e293b", color:"#fff" }}>
+              Add Event
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const AdminScreen = () => {
   const [view,         setView]         = useState("home");
   const [clearConfirm, setClearConfirm] = useState(false);
@@ -5923,6 +6080,13 @@ const AdminScreen = () => {
       <div style={{ marginBottom:20 }}>
         <SecHeader title="ChestTracker Sync"/>
         <AdminCtSyncCard/>
+      </div>
+      )}
+
+      {isAdmin && (
+      <div style={{ marginBottom:20 }}>
+        <SecHeader title="Event Configuration"/>
+        <AdminEventConfig/>
       </div>
       )}
 
@@ -6293,11 +6457,308 @@ const StackCalcScreen = () => {
   );
 };
 
+// ─── SUBMIT SCORE SCREEN ──────────────────────────────────────────────────────
+// Players pick themselves, pick a manual-report event, upload a screenshot,
+// AI extracts their name + score, they confirm and it's saved.
+
+const PROCESS_SS_URL = "https://jssybjxthkhrzxbzpslx.supabase.co/functions/v1/process-score-screenshot";
+
+const SubmitScoreScreen = () => {
+  const { clan: sessionClan } = useSession();
+
+  // steps: "player" → "event" → "upload" → "confirm" → "done"
+  const [step,          setStep]          = useState("player");
+  const [selPlayer,     setSelPlayer]     = useState(null);
+  const [manualEvents,  setManualEvents]  = useState(null); // null = loading
+  const [selEvent,      setSelEvent]      = useState(null); // { event_name, event_date, display }
+  const [imageFile,     setImageFile]     = useState(null);
+  const [imagePreview,  setImagePreview]  = useState(null);
+  const [processing,    setProcessing]    = useState(false);
+  const [extracted,     setExtracted]     = useState(null); // { name, score, notes }
+  const [submitMsg,     setSubmitMsg]     = useState("");
+  const [submitErr,     setSubmitErr]     = useState("");
+  const [search,        setSearch]        = useState("");
+
+  // Load manual events from event_config (sync_type = 'manual' or 'both') for the player's clan
+  React.useEffect(() => {
+    (async () => {
+      const clan = sessionClan || null;
+      let q = db.from("event_config")
+        .select("id, display_name, frequency, clan")
+        .or("sync_type.eq.manual,sync_type.eq.both")
+        .eq("active", true);
+      if (clan) q = q.eq("clan", clan);
+
+      const { data: cfgRows } = await q.order("display_order");
+
+      if (!cfgRows || cfgRows.length === 0) {
+        setManualEvents([]);
+        return;
+      }
+
+      // Build event options — one entry per event (no date needed for manual submission)
+      // Use today's date as default; player confirms the date
+      const today = new Date().toISOString().slice(0, 10);
+      const events = cfgRows.map(r => ({
+        event_id:   r.id,
+        event_name: r.display_name,
+        event_date: today,
+        clan:       r.clan,
+        display:    r.display_name + (r.frequency ? " · " + r.frequency : ""),
+      }));
+      setManualEvents(events);
+    })();
+  }, [sessionClan]);
+
+  const players = (storage.getPlayers() || [])
+    .filter(p => p.active && (!sessionClan || p.clan === sessionClan))
+    .filter(p => !search.trim() || p.name.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const handleImageChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImageFile(file);
+    const reader = new FileReader();
+    reader.onload = ev => setImagePreview(ev.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  const handleProcess = async () => {
+    if (!imageFile || !selPlayer || !selEvent) return;
+    setProcessing(true);
+    setExtracted(null);
+    setSubmitErr("");
+
+    try {
+      // Convert to base64 (strip the data: prefix)
+      const base64 = imagePreview.split(",")[1];
+      const imageType = imageFile.type || "image/jpeg";
+
+      const res = await fetch(PROCESS_SS_URL, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({
+          image_base64: base64,
+          image_type:   imageType,
+          player_name:  selPlayer.name,
+          event_name:   selEvent.event_name,
+        }),
+      });
+      const data = await res.json();
+
+      if (!data.ok) {
+        setSubmitErr(data.error || "Couldn't read the screenshot. Please try a clearer image.");
+        setProcessing(false);
+        return;
+      }
+      setExtracted({ name: data.name, score: data.score, notes: data.notes });
+      setStep("confirm");
+    } catch (e) {
+      setSubmitErr("Something went wrong. Please try again.");
+    }
+    setProcessing(false);
+  };
+
+  const handleSubmit = async () => {
+    if (!extracted || !selPlayer || !selEvent) return;
+    setProcessing(true);
+    setSubmitMsg("");
+
+    const { error } = await db.from("player_score_submissions").insert({
+      player_id:      selPlayer.id,
+      player_name:    selPlayer.name,
+      clan:           selPlayer.clan,
+      event_id:       selEvent.event_id || null,
+      event_name:     selEvent.event_name,
+      event_date:     selEvent.event_date,
+      extracted_name: extracted.name,
+      extracted_score:extracted.score,
+      score:          extracted.score,
+      status:         "approved",
+      notes:          extracted.notes || null,
+    });
+
+    setProcessing(false);
+    if (error) {
+      setSubmitErr("Failed to save: " + error.message);
+    } else {
+      setStep("done");
+    }
+  };
+
+  const reset = () => {
+    setStep("player"); setSelPlayer(null); setSelEvent(null);
+    setImageFile(null); setImagePreview(null); setExtracted(null);
+    setSubmitMsg(""); setSubmitErr(""); setSearch("");
+  };
+
+  const card = (children, extra = {}) => (
+    <div style={{ backgroundColor:"#fff", borderRadius:14, padding:"16px", boxShadow:"0 1px 4px rgba(0,0,0,0.07),0 0 0 1px rgba(0,0,0,0.04)", ...extra }}>
+      {children}
+    </div>
+  );
+
+  const stepLabel = (n, label) => (
+    <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>
+      Step {n} of 4 — {label}
+    </div>
+  );
+
+  const btnPrimary = (label, onClick, disabled = false) => (
+    <button onClick={onClick} disabled={disabled} style={{
+      width:"100%", padding:"13px", borderRadius:12, border:"none", fontSize:15, fontWeight:700,
+      cursor:disabled?"not-allowed":"pointer",
+      backgroundColor:disabled?"#e2e8f0":"#1e293b",
+      color:disabled?"#94a3b8":"#fff", marginTop:12,
+    }}>{label}</button>
+  );
+
+  if (step === "done") return (
+    <div style={{ padding:"32px 16px", textAlign:"center" }}>
+      <div style={{ fontSize:48, marginBottom:12 }}>✅</div>
+      <div style={{ fontSize:20, fontWeight:800, color:"#1e293b", marginBottom:6 }}>Score submitted!</div>
+      <div style={{ fontSize:13, color:"#64748b", marginBottom:4 }}>{selPlayer?.name} · {selEvent?.event_name}</div>
+      <div style={{ fontSize:22, fontWeight:800, color:"#7c3aed", marginBottom:24, fontFamily:"'DM Mono',monospace" }}>
+        {(extracted?.score || 0).toLocaleString()}
+      </div>
+      <button onClick={reset} style={{ padding:"12px 32px", borderRadius:12, border:"none", backgroundColor:"#1e293b", color:"#fff", fontWeight:700, fontSize:14, cursor:"pointer" }}>
+        Submit another
+      </button>
+    </div>
+  );
+
+  return (
+    <div style={{ padding:"0 16px 24px", display:"flex", flexDirection:"column", gap:14 }}>
+
+      {/* ── Step 1: Pick player ── */}
+      {card(<>
+        {stepLabel(1, "Who are you?")}
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search your name…"
+          style={{ width:"100%", boxSizing:"border-box", padding:"10px 12px", borderRadius:10, border:"1.5px solid #e2e8f0", fontSize:14, marginBottom:8, outline:"none" }}
+        />
+        <div style={{ maxHeight:200, overflowY:"auto", display:"flex", flexDirection:"column", gap:4 }}>
+          {players.map(p => (
+            <button key={p.id} onClick={() => { setSelPlayer(p); setSearch(""); if (step === "player") setStep("event"); }}
+              style={{
+                padding:"10px 12px", borderRadius:10, border:"none", textAlign:"left", cursor:"pointer",
+                backgroundColor: selPlayer?.id === p.id ? "#1e293b" : "#f8fafc",
+                color:           selPlayer?.id === p.id ? "#fff"    : "#1e293b",
+                fontWeight:600, fontSize:13, display:"flex", alignItems:"center", gap:8,
+              }}>
+              <span style={{ fontSize:10, fontWeight:700, color: selPlayer?.id === p.id ? "#94a3b8" : CLAN_COLORS[p.clan]||"#94a3b8",
+                             fontFamily:"'DM Mono',monospace", minWidth:28 }}>{p.clan}</span>
+              {p.name}
+            </button>
+          ))}
+        </div>
+      </>)}
+
+      {/* ── Step 2: Pick event ── */}
+      {selPlayer && card(<>
+        {stepLabel(2, "Which event?")}
+        {manualEvents === null && <div style={{ color:"#94a3b8", fontSize:13 }}>Loading events…</div>}
+        {manualEvents && manualEvents.length === 0 && (
+          <div style={{ color:"#94a3b8", fontSize:13 }}>No manual-report events configured yet. Ask an admin to set them up.</div>
+        )}
+        {manualEvents && manualEvents.length > 0 && (
+          <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+            {manualEvents.map((ev, i) => (
+              <button key={i} onClick={() => { setSelEvent(ev); if (step === "event") setStep("upload"); }}
+                style={{
+                  padding:"11px 14px", borderRadius:10, border:"none", textAlign:"left", cursor:"pointer",
+                  backgroundColor: selEvent?.event_name === ev.event_name && selEvent?.event_date === ev.event_date ? "#1e293b" : "#f8fafc",
+                  color:           selEvent?.event_name === ev.event_name && selEvent?.event_date === ev.event_date ? "#fff"    : "#1e293b",
+                  fontWeight:600, fontSize:13,
+                }}>
+                {ev.display}
+              </button>
+            ))}
+          </div>
+        )}
+      </>)}
+
+      {/* ── Step 3: Upload screenshot ── */}
+      {selPlayer && selEvent && card(<>
+        {stepLabel(3, "Upload your screenshot")}
+        <p style={{ fontSize:12, color:"#64748b", margin:"0 0 12px" }}>
+          Take a screenshot showing your name and score for <strong>{selEvent.event_name}</strong>, then upload it here.
+        </p>
+        <label style={{
+          display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+          gap:8, padding:"20px 16px", border:"2px dashed #cbd5e1", borderRadius:12, cursor:"pointer",
+          backgroundColor: imagePreview ? "#f8fafc" : "#fafafe",
+        }}>
+          {imagePreview
+            ? <img src={imagePreview} alt="preview" style={{ maxWidth:"100%", maxHeight:200, borderRadius:8, objectFit:"contain" }}/>
+            : <>
+                <div style={{ fontSize:32 }}>📸</div>
+                <div style={{ fontSize:13, fontWeight:600, color:"#64748b" }}>Tap to choose screenshot</div>
+                <div style={{ fontSize:11, color:"#94a3b8" }}>PNG or JPG</div>
+              </>
+          }
+          <input type="file" accept="image/*" onChange={handleImageChange} style={{ display:"none" }}/>
+        </label>
+        {imagePreview && (
+          <button onClick={() => { setImageFile(null); setImagePreview(null); setExtracted(null); setSubmitErr(""); }}
+            style={{ background:"none", border:"none", color:"#94a3b8", fontSize:12, cursor:"pointer", marginTop:4 }}>
+            ✕ Remove image
+          </button>
+        )}
+        {submitErr && <div style={{ color:"#dc2626", fontSize:13, fontWeight:600, marginTop:8 }}>{submitErr}</div>}
+        {btnPrimary(
+          processing ? "Analysing…" : "Analyse Screenshot",
+          handleProcess,
+          !imageFile || processing,
+        )}
+      </>)}
+
+      {/* ── Step 4: Confirm ── */}
+      {step === "confirm" && extracted && card(<>
+        {stepLabel(4, "Confirm your score")}
+        <p style={{ fontSize:12, color:"#64748b", margin:"0 0 14px" }}>
+          The AI found the following in your screenshot. Check it looks right before submitting.
+        </p>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:4 }}>
+          {[
+            { label:"Player",  value:extracted.name  },
+            { label:"Event",   value:selEvent.event_name },
+            { label:"Date",    value:new Date(selEvent.event_date + "T12:00:00Z").toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}) },
+            { label:"Score",   value:(extracted.score||0).toLocaleString(), highlight:true },
+          ].map(({ label, value, highlight }) => (
+            <div key={label} style={{ backgroundColor:"#f8fafc", borderRadius:10, padding:"10px 12px" }}>
+              <div style={{ fontSize:9, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:3 }}>{label}</div>
+              <div style={{ fontSize:highlight?18:13, fontWeight:800, color:highlight?"#7c3aed":"#1e293b", fontFamily:"'DM Mono',monospace" }}>{value}</div>
+            </div>
+          ))}
+        </div>
+        {extracted.notes && <div style={{ fontSize:11, color:"#94a3b8", marginTop:6 }}>Note: {extracted.notes}</div>}
+        {submitErr && <div style={{ color:"#dc2626", fontSize:13, fontWeight:600, marginTop:8 }}>{submitErr}</div>}
+        <div style={{ display:"flex", gap:8, marginTop:12 }}>
+          <button onClick={() => { setStep("upload"); setExtracted(null); setSubmitErr(""); }}
+            style={{ flex:1, padding:"12px", borderRadius:12, border:"1.5px solid #e2e8f0", fontSize:14, fontWeight:600, cursor:"pointer", backgroundColor:"#fff", color:"#475569" }}>
+            ← Retake
+          </button>
+          <button onClick={handleSubmit} disabled={processing}
+            style={{ flex:2, padding:"12px", borderRadius:12, border:"none", fontSize:14, fontWeight:700, cursor:processing?"not-allowed":"pointer", backgroundColor:processing?"#e2e8f0":"#16a34a", color:processing?"#94a3b8":"#fff" }}>
+            {processing ? "Submitting…" : "✓ Submit Score"}
+          </button>
+        </div>
+      </>)}
+
+    </div>
+  );
+};
+
 // ─── BOTTOM NAV ───────────────────────────────────────────────────────────────
 const ALL_NAV = [
   { id:"players",     label:"Players",      icon:"players", roles:["super","clan","user"] },
   { id:"scores",      label:"Score Entry",  icon:"score",   roles:["super","clan"]        },
   { id:"trends",      label:"Summary",      icon:"trends",  roles:["super","clan"]        },
+  { id:"submitScore", label:"Submit Score", icon:"score",   roles:["super","clan","user"] },
   { id:"updateLevel", label:"Update Level", icon:"levelUp", roles:["super","clan","user"] },
   { id:"stack",       label:"Stack Calc",   icon:"calc",    roles:["super","clan","user"] },
   { id:"admin",       label:"Admin",        icon:"admin",   roles:["super","clan"]        },
@@ -6329,6 +6790,7 @@ const PageHeader = ({ screen, onLogout }) => {
     players:     { title:"Players",          sub:"Clan rosters & levels"       },
     scores:      { title:"Score Entry",      sub:"Record event scores"         },
     trends:      { title:"Summary",          sub:"Trends & performance"        },
+    submitScore: { title:"Submit Score",     sub:"Upload your event screenshot"},
     updateLevel: { title:"Update Level",     sub:"Submit a level request"      },
     stack:       { title:"Stack Calculator", sub:"Recommended troop stack"     },
     admin:       { title:"Admin",            sub:"Settings & tools"            },
@@ -6635,12 +7097,13 @@ function App() {
   // Stack Calculator never needs it. All other tabs wait for it.
   const dataReady = dataVersion > 0 && window._appData?.players !== undefined;
   const screens = {
-    players:     dataReady ? <PlayersScreen/>     : <DataLoadingScreen/>,
-    scores:      dataReady ? <ScoreEntryScreen/>  : <DataLoadingScreen/>,
-    trends:      dataReady ? <TrendsScreen/>      : <DataLoadingScreen/>,
-    updateLevel: dataReady ? <UpdateLevelScreen/> : <DataLoadingScreen/>,
+    players:     dataReady ? <PlayersScreen/>      : <DataLoadingScreen/>,
+    scores:      dataReady ? <ScoreEntryScreen/>   : <DataLoadingScreen/>,
+    trends:      dataReady ? <TrendsScreen/>       : <DataLoadingScreen/>,
+    submitScore: dataReady ? <SubmitScoreScreen/>  : <DataLoadingScreen/>,
+    updateLevel: dataReady ? <UpdateLevelScreen/>  : <DataLoadingScreen/>,
     stack:       <StackCalcScreen/>,
-    admin:       dataReady ? <AdminScreen/>       : <DataLoadingScreen/>,
+    admin:       dataReady ? <AdminScreen/>        : <DataLoadingScreen/>,
   };
 
   // Ensure screen is valid for current role
