@@ -3009,8 +3009,12 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
 
   // Build everything from daily_player_epic — one source of truth
   const allRows = window._appData?.dailyPlayerEpic || [];
-  // Use raw CT event names directly — no display name mapping for now
-  const rawToDisplay = (raw) => raw || null;
+  // Clean event name: strip "epic" and "squad", capitalise each word
+  const rawToDisplay = (raw) => {
+    if (!raw) return null;
+    const cleaned = raw.replace(/\bepic\b/gi, "").replace(/\bsquad\b/gi, "").replace(/\s+/g, " ").trim();
+    return cleaned.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ") || raw;
+  };
 
   // colorMap: all unique display-name event types seen in the data
   const allEventNames = [...new Set(
@@ -3118,7 +3122,7 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                 <div style={{ display:"flex", gap:0, alignItems:"flex-start" }}>
                   {/* Y-axis ticks */}
                   <div style={{ flexShrink:0, width:42, display:"flex", flexDirection:"column", justifyContent:"space-between",
-                                height:BAR_H+14, paddingBottom:14, paddingTop:0 }}>
+                                height:BAR_H+28, paddingTop:14, paddingBottom:14 }}>
                     {[1, 0.75, 0.5, 0.25, 0].map(pct => (
                       <div key={pct} style={{ fontSize:8, color:"#cbd5e1", textAlign:"right", lineHeight:1, paddingRight:4,
                                               fontFamily:"'DM Mono',monospace" }}>
