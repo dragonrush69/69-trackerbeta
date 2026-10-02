@@ -1583,12 +1583,13 @@ const PlayerForm = ({ player, onDone }) => {
 // Shown on the player card for events with sync_type = 'manual' or 'both'.
 // Lets the player upload a screenshot inline and saves to player_score_submissions.
 const ManualEventCard = ({ cfg, player }) => {
+  const { role: _mecRole } = useSession();
   const allSubs = (window._appData?.scoreSubmissions || [])
     .filter(s => s.player_id === player.id &&
                  (s.event_id === cfg.id || s.event_name === cfg.display_name));
   const subs = allSubs.slice(0, 3);
 
-  const isAdmin = ["super","clan"].includes(window._appData?.currentUser?.role);
+  const isAdmin = ["super","clan"].includes(_mecRole);
   const [uploading,    setUploading]    = useState(false);
   const [imagePreview, setImagePreview] = useState(null);
   const [imageFile,    setImageFile]    = useState(null);
@@ -1695,9 +1696,12 @@ const ManualEventCard = ({ cfg, player }) => {
     setSaved(s => !s);
   };
 
+  const MCOLS = `80px repeat(3, 1fr)`;
+  const noScoreStyle = { fontSize:12, color:"#cbd5e1", fontFamily:"'DM Mono',monospace", fontWeight:500 };
+
   return (
     <Card>
-      {/* Header */}
+      {/* Header — matches auto event style */}
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
         <div>
           <span style={{ fontSize:14, fontWeight:700, color:"#1e293b" }}>{cfg.display_name}</span>
@@ -1714,55 +1718,69 @@ const ManualEventCard = ({ cfg, player }) => {
         )}
       </div>
 
-      {/* Past submissions */}
+      {/* Past submissions — same grid layout as auto events */}
       {subs.length === 0 && !uploading && (
         <p style={{ fontSize:13, color:"#cbd5e1", margin:0, fontStyle:"italic" }}>No scores submitted yet</p>
       )}
-      {subs.length > 0 && (
-        <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+      {subs.length > 0 && (<>
+        {/* Column headers: date + Edit/Del */}
+        <div style={{ display:"grid", gridTemplateColumns:MCOLS, gap:4, marginBottom:4 }}>
+          <div/>
           {subs.map((s, i) => (
-            <div key={s.id || i} style={{ display:"flex", alignItems:"center", gap:8,
-              padding:"6px 8px", borderRadius:8, backgroundColor: i===0?"#f5f3ff":"#f8fafc",
-              border: i===0?"1px solid #e9d5ff":"1px solid #f1f5f9" }}>
-              <div style={{ flex:1, minWidth:0 }}>
-                <div style={{ fontSize:9, color:"#94a3b8", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.04em" }}>
-                  {i === 0 ? "Latest" : new Date(s.event_date + "T12:00:00Z").toLocaleDateString("en-GB", { day:"numeric", month:"short" })}
-                </div>
-                {editingId === s.id ? (
-                  <div style={{ display:"flex", gap:4, marginTop:2 }}>
-                    <input value={editScore} onChange={e => setEditScore(e.target.value)}
-                      style={{ width:100, padding:"2px 6px", borderRadius:6, border:"1.5px solid #7c3aed",
-                               fontSize:12, fontWeight:700, fontFamily:"'DM Mono',monospace" }}
-                      autoFocus/>
-                    <button onClick={() => handleEditSave(s)}
-                      style={{ padding:"2px 8px", borderRadius:6, border:"none", backgroundColor:"#7c3aed",
-                               color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer" }}>Save</button>
-                    <button onClick={() => { setEditingId(null); setEditScore(""); }}
-                      style={{ padding:"2px 8px", borderRadius:6, border:"1px solid #e2e8f0", backgroundColor:"#fff",
-                               color:"#475569", fontSize:11, fontWeight:700, cursor:"pointer" }}>✕</button>
-                  </div>
-                ) : (
-                  <div style={{ fontSize:13, fontWeight:700, color:i===0?"#1e293b":"#94a3b8", fontFamily:"'DM Mono',monospace" }}>
-                    {Number(s.score).toLocaleString()}
-                  </div>
-                )}
+            <div key={i} style={{ textAlign:"center" }}>
+              <div style={{ fontSize:9, color:"#94a3b8", fontWeight:600, fontFamily:"'DM Mono',monospace", marginBottom: isAdmin ? 2 : 0 }}>
+                {i === 0 ? "Latest" : new Date(s.event_date + "T12:00:00Z").toLocaleDateString("en-GB", { day:"numeric", month:"short" })}
               </div>
-              {isAdmin && editingId !== s.id && (
-                <div style={{ display:"flex", gap:4, flexShrink:0 }}>
+              {isAdmin && (
+                <div style={{ display:"flex", justifyContent:"center", gap:4 }}>
                   <button onClick={() => { setEditingId(s.id); setEditScore(String(s.score)); }}
-                    title="Edit score"
-                    style={{ padding:"3px 7px", borderRadius:6, border:"1px solid #e2e8f0", backgroundColor:"#fff",
-                             fontSize:11, cursor:"pointer", color:"#475569" }}>✏️</button>
+                    style={{ fontSize:9, color:"#3b82f6", background:"none", border:"none", cursor:"pointer", padding:0, fontWeight:700 }}>
+                    Edit
+                  </button>
+                  <span style={{ fontSize:9, color:"#e2e8f0" }}>|</span>
                   <button onClick={() => handleDelete(s)}
-                    title="Delete submission"
-                    style={{ padding:"3px 7px", borderRadius:6, border:"1px solid #fee2e2", backgroundColor:"#fff",
-                             fontSize:11, cursor:"pointer", color:"#dc2626" }}>🗑️</button>
+                    style={{ fontSize:9, color:"#dc2626", background:"none", border:"none", cursor:"pointer", padding:0, fontWeight:700 }}>
+                    Del
+                  </button>
                 </div>
               )}
             </div>
           ))}
+          {Array.from({ length: Math.max(0, 3 - subs.length) }).map((_,i) => <div key={i}/>)}
         </div>
-      )}
+
+        {/* Score row */}
+        <div style={{ display:"grid", gridTemplateColumns:MCOLS, gap:4, alignItems:"center", padding:"4px 0", borderTop:"1px solid #f1f5f9" }}>
+          <div style={{ fontSize:10, color:"#94a3b8", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.04em" }}>Score</div>
+          {subs.map((s, i) => (
+            <div key={i} style={{ textAlign:"center", minWidth:0 }}>
+              {editingId === s.id ? (
+                <div style={{ display:"flex", flexDirection:"column", gap:3, alignItems:"center" }}>
+                  <input value={editScore} onChange={e => setEditScore(e.target.value)}
+                    style={{ width:"90%", padding:"2px 4px", borderRadius:5, border:"1.5px solid #7c3aed",
+                             fontSize:11, fontWeight:700, fontFamily:"'DM Mono',monospace", textAlign:"center" }}
+                    autoFocus/>
+                  <div style={{ display:"flex", gap:3 }}>
+                    <button onClick={() => handleEditSave(s)}
+                      style={{ padding:"1px 6px", borderRadius:5, border:"none", backgroundColor:"#7c3aed",
+                               color:"#fff", fontSize:9, fontWeight:700, cursor:"pointer" }}>Save</button>
+                    <button onClick={() => { setEditingId(null); setEditScore(""); }}
+                      style={{ padding:"1px 6px", borderRadius:5, border:"1px solid #e2e8f0", backgroundColor:"#fff",
+                               color:"#475569", fontSize:9, fontWeight:700, cursor:"pointer" }}>✕</button>
+                  </div>
+                </div>
+              ) : (
+                <span style={{ fontSize:11, fontWeight:700, color:i===0?"#1e293b":"#94a3b8", fontFamily:"'DM Mono',monospace" }}>
+                  {Number(s.score).toLocaleString()}
+                </span>
+              )}
+            </div>
+          ))}
+          {Array.from({ length: Math.max(0, 3 - subs.length) }).map((_,i) => (
+            <div key={i} style={{ textAlign:"center" }}><span style={noScoreStyle}>—</span></div>
+          ))}
+        </div>
+      </>)}
 
       {/* Upload flow */}
       {uploading && (
