@@ -3063,8 +3063,13 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
     );
   }
 
+  // DEBUG strip — shows raw fetch info so we can diagnose date range issues
+  const _dates = allRows.map(r => r.date).sort();
+  const _debugInfo = `${allRows.length} rows · ${_dates[0]} → ${_dates[_dates.length-1]} · events: ${allEventNames.join(", ")||"none"}`;
+
   return (
     <div>
+      <div style={{ fontSize:10, color:"#94a3b8", marginBottom:8, fontFamily:"'DM Mono',monospace", wordBreak:"break-all" }}>{_debugInfo}</div>
       {/* Event filter pills */}
       {allEventNames.length > 0 && (
         <div style={{ display:"flex", flexWrap:"wrap", gap:"5px 8px", marginBottom:12 }}>
