@@ -338,7 +338,7 @@ async function loadFromSheets() {
       // Event config — drives player card visibility
       db.from("event_config").select("id, clan, display_name, show_on_player_card, active, display_order, sync_type").order("display_order"),
       // Manual score submissions — player-uploaded screenshots
-      db.from("player_score_submissions").select("player_id, clan, event_id, event_name, event_date, score, submitted_at, status").eq("status", "approved").order("event_date", { ascending: false }),
+      db.from("player_score_submissions").select("id, player_id, clan, event_id, event_name, event_date, score, submitted_at, status").eq("status", "approved").order("event_date", { ascending: false }),
     ]);
 
     // Fetch epic squad event breakdown (per event, per day — from chests table via matview)
@@ -1588,6 +1588,7 @@ const ManualEventCard = ({ cfg, player }) => {
                  (s.event_id === cfg.id || s.event_name === cfg.display_name));
   const subs = allSubs.slice(0, 3);
 
+  const isAdmin = ["super","clan"].includes(window._appData?.currentUser?.role);
   const [uploading,    setUploading]    = useState(false);
   const [imagePreview, setImagePreview] = useState(null);
   const [imageFile,    setImageFile]    = useState(null);
@@ -1595,6 +1596,8 @@ const ManualEventCard = ({ cfg, player }) => {
   const [extracted,    setExtracted]    = useState(null);
   const [err,          setErr]          = useState("");
   const [saved,        setSaved]        = useState(false);
+  const [editingId,    setEditingId]    = useState(null);
+  const [editScore,    setEditScore]    = useState("");
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -1666,6 +1669,32 @@ const ManualEventCard = ({ cfg, player }) => {
 
   const cancel = () => { setUploading(false); setImageFile(null); setImagePreview(null); setExtracted(null); setErr(""); setSaved(false); };
 
+  const handleDelete = async (sub) => {
+    if (!sub.id) return;
+    if (!confirm("Delete this score submission?")) return;
+    const { error } = await db.from("player_score_submissions").delete().eq("id", sub.id);
+    if (error) { alert("Delete failed: " + error.message); return; }
+    if (window._appData?.scoreSubmissions) {
+      const idx = window._appData.scoreSubmissions.findIndex(s => s.id === sub.id);
+      if (idx !== -1) window._appData.scoreSubmissions.splice(idx, 1);
+    }
+    // force re-render by updating a dummy state
+    setSaved(s => !s);
+  };
+
+  const handleEditSave = async (sub) => {
+    const newScore = parseInt(editScore.replace(/,/g, ""), 10);
+    if (!newScore || isNaN(newScore)) { alert("Enter a valid score"); return; }
+    const { error } = await db.from("player_score_submissions").update({ score: newScore }).eq("id", sub.id);
+    if (error) { alert("Update failed: " + error.message); return; }
+    if (window._appData?.scoreSubmissions) {
+      const entry = window._appData.scoreSubmissions.find(s => s.id === sub.id);
+      if (entry) entry.score = newScore;
+    }
+    setEditingId(null); setEditScore("");
+    setSaved(s => !s);
+  };
+
   return (
     <Card>
       {/* Header */}
@@ -1690,30 +1719,49 @@ const ManualEventCard = ({ cfg, player }) => {
         <p style={{ fontSize:13, color:"#cbd5e1", margin:0, fontStyle:"italic" }}>No scores submitted yet</p>
       )}
       {subs.length > 0 && (
-        <>
-          <div style={{ display:"grid", gridTemplateColumns:"80px repeat(3, 1fr)", gap:4, marginBottom:4 }}>
-            <div/>
-            {subs.map((s, i) => (
-              <div key={i} style={{ textAlign:"center", fontSize:9, color:"#94a3b8", fontWeight:600, fontFamily:"'DM Mono',monospace" }}>
-                {i === 0 ? "Latest" : new Date(s.event_date + "T12:00:00Z").toLocaleDateString("en-GB", { day:"numeric", month:"short" })}
+        <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+          {subs.map((s, i) => (
+            <div key={s.id || i} style={{ display:"flex", alignItems:"center", gap:8,
+              padding:"6px 8px", borderRadius:8, backgroundColor: i===0?"#f5f3ff":"#f8fafc",
+              border: i===0?"1px solid #e9d5ff":"1px solid #f1f5f9" }}>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:9, color:"#94a3b8", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.04em" }}>
+                  {i === 0 ? "Latest" : new Date(s.event_date + "T12:00:00Z").toLocaleDateString("en-GB", { day:"numeric", month:"short" })}
+                </div>
+                {editingId === s.id ? (
+                  <div style={{ display:"flex", gap:4, marginTop:2 }}>
+                    <input value={editScore} onChange={e => setEditScore(e.target.value)}
+                      style={{ width:100, padding:"2px 6px", borderRadius:6, border:"1.5px solid #7c3aed",
+                               fontSize:12, fontWeight:700, fontFamily:"'DM Mono',monospace" }}
+                      autoFocus/>
+                    <button onClick={() => handleEditSave(s)}
+                      style={{ padding:"2px 8px", borderRadius:6, border:"none", backgroundColor:"#7c3aed",
+                               color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer" }}>Save</button>
+                    <button onClick={() => { setEditingId(null); setEditScore(""); }}
+                      style={{ padding:"2px 8px", borderRadius:6, border:"1px solid #e2e8f0", backgroundColor:"#fff",
+                               color:"#475569", fontSize:11, fontWeight:700, cursor:"pointer" }}>✕</button>
+                  </div>
+                ) : (
+                  <div style={{ fontSize:13, fontWeight:700, color:i===0?"#1e293b":"#94a3b8", fontFamily:"'DM Mono',monospace" }}>
+                    {Number(s.score).toLocaleString()}
+                  </div>
+                )}
               </div>
-            ))}
-            {Array.from({ length: Math.max(0, 3 - subs.length) }).map((_,i) => <div key={i}/>)}
-          </div>
-          <div style={{ display:"grid", gridTemplateColumns:"80px repeat(3, 1fr)", gap:4, alignItems:"center", padding:"4px 0", borderTop:"1px solid #f1f5f9" }}>
-            <div style={{ fontSize:10, color:"#94a3b8", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.04em" }}>Score</div>
-            {subs.map((s, i) => (
-              <div key={i} style={{ textAlign:"center" }}>
-                <span style={{ fontSize:11, fontWeight:700, color:i===0?"#1e293b":"#94a3b8", fontFamily:"'DM Mono',monospace" }}>
-                  {Number(s.score).toLocaleString()}
-                </span>
-              </div>
-            ))}
-            {Array.from({ length: Math.max(0, 3 - subs.length) }).map((_,i) => (
-              <div key={i} style={{ textAlign:"center" }}><span style={{ fontSize:12, color:"#cbd5e1", fontFamily:"'DM Mono',monospace" }}>—</span></div>
-            ))}
-          </div>
-        </>
+              {isAdmin && editingId !== s.id && (
+                <div style={{ display:"flex", gap:4, flexShrink:0 }}>
+                  <button onClick={() => { setEditingId(s.id); setEditScore(String(s.score)); }}
+                    title="Edit score"
+                    style={{ padding:"3px 7px", borderRadius:6, border:"1px solid #e2e8f0", backgroundColor:"#fff",
+                             fontSize:11, cursor:"pointer", color:"#475569" }}>✏️</button>
+                  <button onClick={() => handleDelete(s)}
+                    title="Delete submission"
+                    style={{ padding:"3px 7px", borderRadius:6, border:"1px solid #fee2e2", backgroundColor:"#fff",
+                             fontSize:11, cursor:"pointer", color:"#dc2626" }}>🗑️</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
       )}
 
       {/* Upload flow */}
@@ -3302,13 +3350,48 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
     day.players[r.player_id].byEvent[dn] = (day.players[r.player_id].byEvent[dn] || 0) + r.chests;
   });
 
-  // One bar per day — no merging
+  // One bar per day — merge tiny reset-day spillover into previous day
   const buildRuns = (clan) => {
-    return Object.keys(byDay[clan] || {}).sort()
-      .filter(day => (byDay[clan][day]?.total || 0) > 0)
+    const days = Object.keys(byDay[clan] || {}).sort()
+      .filter(day => (byDay[clan][day]?.total || 0) > 0);
+
+    // Detect reset-day spill: if a day's total < 5% of average (min threshold 500),
+    // it's a partial-day artifact from reset — roll it into the previous day.
+    const totals = days.map(d => byDay[clan][d].total);
+    const avg = totals.length ? totals.reduce((s, v) => s + v, 0) / totals.length : 0;
+    const RESET_THRESHOLD = Math.max(500, avg * 0.05);
+
+    // Build merged map: day → combined data
+    const merged = {}; // day → { total, subEvents, players }
+    days.forEach((day, i) => {
+      const src = byDay[clan][day];
+      if (src.total < RESET_THRESHOLD && i > 0) {
+        // Roll into previous day
+        const prevDay = days[i - 1];
+        const target = merged[prevDay] || { total: byDay[clan][prevDay].total,
+          subEvents: { ...byDay[clan][prevDay].subEvents },
+          players:   { ...byDay[clan][prevDay].players } };
+        target.total += src.total;
+        Object.entries(src.subEvents).forEach(([k, v]) => {
+          target.subEvents[k] = (target.subEvents[k] || 0) + v;
+        });
+        Object.entries(src.players).forEach(([pid, pd]) => {
+          if (!target.players[pid]) target.players[pid] = { name: pd.name, byEvent: {} };
+          Object.entries(pd.byEvent).forEach(([ev, v]) => {
+            target.players[pid].byEvent[ev] = (target.players[pid].byEvent[ev] || 0) + v;
+          });
+        });
+        merged[prevDay] = target;
+        // skip adding the tiny day itself
+      } else {
+        if (!merged[day]) merged[day] = { total: src.total, subEvents: { ...src.subEvents }, players: { ...src.players } };
+      }
+    });
+
+    return Object.keys(merged).sort()
+      .filter(day => (merged[day]?.total || 0) > 0)
       .map(day => {
-        const { total, subEvents } = byDay[clan][day];
-        // dominant event = the sub-event with most chests
+        const { total, subEvents } = merged[day];
         const dominant = Object.entries(subEvents).sort((a,b) => b[1]-a[1])[0]?.[0] ?? null;
         return { eventName:dominant, rawEventName:null, subEvents, startDay:day, endDay:day, days:[day], runTotal:total };
       });
