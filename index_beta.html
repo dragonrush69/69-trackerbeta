@@ -3356,12 +3356,7 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
 // ─── DAILY REWARDS CARD ───────────────────────────────────────────────────────
 const DailyRewardsCard = ({ clansToShow = ["69R","69S"] }) => {
   const rows   = window._appData?.dailyClanRewards || [];
-  const fmtNum = n => {
-    const v = Number(n) || 0;
-    if (v >= 1_000_000) return (v / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
-    if (v >= 1_000)     return (v / 1_000).toFixed(1).replace(/\.0$/, "") + "k";
-    return v.toLocaleString();
-  };
+  const fmtNum = n => (Number(n) || 0).toLocaleString();
   const FIELDS = [
     { key:"tar_epic",      label:"Tar Epic",  color:"#7c3aed" },
     { key:"gold",          label:"Gold",      color:"#d97706" },
@@ -3414,6 +3409,25 @@ const DailyRewardsCard = ({ clansToShow = ["69R","69S"] }) => {
                 </div>
               );
             })}
+            {/* Totals row */}
+            {(() => {
+              const totals = {};
+              FIELDS.forEach(f => {
+                totals[f.key] = dates.reduce((sum, date) => sum + (Number(byDate[date]?.[f.key]) || 0), 0);
+              });
+              return (
+                <div style={{ display:"grid", gridTemplateColumns:"80px repeat(3, 1fr)", gap:4,
+                               alignItems:"center", padding:"6px 0", borderTop:"2px solid #e2e8f0", marginTop:2 }}>
+                  <div style={{ fontSize:10, color:"#475569", fontFamily:"'DM Mono',monospace", fontWeight:800 }}>Total</div>
+                  {FIELDS.map(f => (
+                    <div key={f.key} style={{ textAlign:"center", fontSize:11, fontWeight:800,
+                                              color:f.color, fontFamily:"'DM Mono',monospace" }}>
+                      {fmtNum(totals[f.key])}
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         );
       })}
