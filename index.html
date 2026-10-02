@@ -313,6 +313,7 @@ async function loadFromSheets() {
       { data: arcaneEpicRows },
       { data: olympusEpicRows },
       { data: eventConfigRows },
+      { data: scoreSubmissions },
     ] = await Promise.all([
       db.from("players").select("*"),
       db.from("config").select("*"),
@@ -335,7 +336,9 @@ async function loadFromSheets() {
         .or("event_name.ilike.%chimera%,event_name.ilike.%basilisk%,event_name.ilike.%briareus%")
         .gte("date", new Date(Date.now() - 90*24*60*60*1000).toISOString().slice(0,10)),
       // Event config — drives player card visibility
-      db.from("event_config").select("id, clan, display_name, show_on_player_card, active, display_order").order("display_order"),
+      db.from("event_config").select("id, clan, display_name, show_on_player_card, active, display_order, sync_type").order("display_order"),
+      // Manual score submissions — player-uploaded screenshots
+      db.from("player_score_submissions").select("player_id, clan, event_id, event_name, event_date, score, submitted_at, status").eq("status", "approved").order("event_date", { ascending: false }),
     ]);
 
     // Fetch epic squad event breakdown (per event, per day — from chests table via matview)
@@ -494,8 +497,9 @@ async function loadFromSheets() {
       ctSync:      config.ctSync      || {},
       ctAliases:   config.ctAliases   || {},
       ctIgnored:   config.ctIgnored   || {},
-      epicSquadEvents: epicSquadEvents || [],
-      eventConfig:     eventConfigRows || [],
+      epicSquadEvents:    epicSquadEvents   || [],
+      eventConfig:        eventConfigRows   || [],
+      scoreSubmissions:   scoreSubmissions  || [],
     };
   } catch (err) {
     console.warn("Supabase load failed:", err);
@@ -1773,6 +1777,68 @@ const PlayerDetail = ({ player, onBack }) => {
           );
         })}
       </div>
+
+      {/* Manual score submissions */}
+      {(() => {
+        const manualCfg = (window._appData?.eventConfig || [])
+          .filter(r => r.clan === player.clan && r.active && r.show_on_player_card &&
+                       (r.sync_type === "manual" || r.sync_type === "both"));
+        if (manualCfg.length === 0) return null;
+
+        const allSubs = (window._appData?.scoreSubmissions || [])
+          .filter(s => s.player_id === player.id && s.clan === player.clan);
+
+        return (
+          <div style={{ display:"flex", flexDirection:"column", gap:12, marginTop:12 }}>
+            {manualCfg.map(cfg => {
+              const subs = allSubs
+                .filter(s => s.event_id === cfg.id || s.event_name === cfg.display_name)
+                .slice(0, 3);
+              return (
+                <Card key={cfg.id}>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+                    <div>
+                      <span style={{ fontSize:14, fontWeight:700, color:"#1e293b" }}>{cfg.display_name}</span>
+                      <span style={{ marginLeft:8, fontSize:10, fontWeight:700, color:"#7c3aed",
+                                     backgroundColor:"#7c3aed18", border:"1px solid #7c3aed33",
+                                     borderRadius:6, padding:"2px 6px", textTransform:"uppercase" }}>Manual</span>
+                    </div>
+                  </div>
+                  {subs.length === 0 ? (
+                    <p style={{ fontSize:13, color:"#cbd5e1", margin:0, fontStyle:"italic" }}>No scores submitted yet</p>
+                  ) : (
+                    <>
+                      <div style={{ display:"grid", gridTemplateColumns:"80px repeat(3, 1fr)", gap:4, marginBottom:4 }}>
+                        <div/>
+                        {subs.map((s, i) => (
+                          <div key={i} style={{ textAlign:"center", fontSize:9, color:"#94a3b8", fontWeight:600, fontFamily:"'DM Mono',monospace" }}>
+                            {i === 0 ? "Latest" : new Date(s.event_date + "T12:00:00Z").toLocaleDateString("en-GB", { day:"numeric", month:"short" })}
+                          </div>
+                        ))}
+                        {Array.from({ length: Math.max(0, 3 - subs.length) }).map((_,i) => <div key={i}/>)}
+                      </div>
+                      <div style={{ display:"grid", gridTemplateColumns:"80px repeat(3, 1fr)", gap:4, alignItems:"center", padding:"4px 0", borderTop:"1px solid #f1f5f9" }}>
+                        <div style={{ fontSize:10, color:"#94a3b8", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.04em" }}>Score</div>
+                        {subs.map((s, i) => (
+                          <div key={i} style={{ textAlign:"center" }}>
+                            <span style={{ fontSize:11, fontWeight:700, color:i===0?"#1e293b":"#94a3b8", fontFamily:"'DM Mono',monospace" }}>
+                              {Number(s.score).toLocaleString()}
+                            </span>
+                          </div>
+                        ))}
+                        {Array.from({ length: Math.max(0, 3 - subs.length) }).map((_,i) => (
+                          <div key={i} style={{ textAlign:"center" }}><span style={{ fontSize:12, color:"#cbd5e1", fontFamily:"'DM Mono',monospace" }}>—</span></div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </Card>
+              );
+            })}
+          </div>
+        );
+      })()}
+
     </div>
   );
 };
