@@ -1615,7 +1615,10 @@ const ManualEventCard = ({ cfg, player }) => {
       const base64 = imagePreview.split(",")[1];
       const res = await fetch(PROCESS_SS_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type":  "application/json",
+          "Authorization": "Bearer " + SUPABASE_KEY,
+        },
         body: JSON.stringify({
           image_base64: base64,
           image_type:   imageFile.type || "image/jpeg",
@@ -6770,7 +6773,10 @@ const SubmitScoreScreen = () => {
 
       const res = await fetch(PROCESS_SS_URL, {
         method:  "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type":  "application/json",
+          "Authorization": "Bearer " + SUPABASE_KEY,
+        },
         body:    JSON.stringify({
           image_base64: base64,
           image_type:   imageType,
