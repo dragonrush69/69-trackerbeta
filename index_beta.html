@@ -3384,22 +3384,27 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
     days.forEach((day, i) => {
       const src = byDay[clan][day];
       if (src.total < RESET_THRESHOLD && i > 0) {
-        // Roll into previous day
+        // Roll into previous day — keep previous day's event proportions, just scale up total
         const prevDay = days[i - 1];
-        const target = merged[prevDay] || { total: byDay[clan][prevDay].total,
+        const base = merged[prevDay] || { total: byDay[clan][prevDay].total,
           subEvents: { ...byDay[clan][prevDay].subEvents },
           players:   { ...byDay[clan][prevDay].players } };
-        target.total += src.total;
-        Object.entries(src.subEvents).forEach(([k, v]) => {
-          target.subEvents[k] = (target.subEvents[k] || 0) + v;
+        const oldTotal = base.total;
+        const newTotal = oldTotal + src.total;
+        // Scale existing subEvents proportionally — don't import new event types from the spill day
+        const scaledSubs = {};
+        Object.entries(base.subEvents).forEach(([k, v]) => {
+          scaledSubs[k] = Math.round(v * (newTotal / oldTotal));
         });
+        // Merge players (still credit their activity)
+        const mergedPlayers = { ...base.players };
         Object.entries(src.players).forEach(([pid, pd]) => {
-          if (!target.players[pid]) target.players[pid] = { name: pd.name, byEvent: {} };
+          if (!mergedPlayers[pid]) mergedPlayers[pid] = { name: pd.name, byEvent: {} };
           Object.entries(pd.byEvent).forEach(([ev, v]) => {
-            target.players[pid].byEvent[ev] = (target.players[pid].byEvent[ev] || 0) + v;
+            mergedPlayers[pid].byEvent[ev] = (mergedPlayers[pid].byEvent[ev] || 0) + v;
           });
         });
-        merged[prevDay] = target;
+        merged[prevDay] = { total: newTotal, subEvents: scaledSubs, players: mergedPlayers };
         // skip adding the tiny day itself
       } else {
         if (!merged[day]) merged[day] = { total: src.total, subEvents: { ...src.subEvents }, players: { ...src.players } };
@@ -3482,14 +3487,24 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                   {/* Y-axis ticks */}
                   <div style={{ flexShrink:0, width:42, display:"flex", flexDirection:"column", justifyContent:"space-between",
                                 height:BAR_H+28, paddingTop:14, paddingBottom:14 }}>
-                    {[1, 0.75, 0.5, 0.25, 0].map(pct => (
+                    {[1, 0.75, 0.5, 0.25, 0].map(pct => {
+                      const val = maxRunTotal * pct;
+                      let label = "0";
+                      if (maxRunTotal > 0) {
+                        if (maxRunTotal >= 1000) {
+                          const k = val / 1000;
+                          label = k === 0 ? "0" : (k < 1 ? `${k.toFixed(1)}k` : `${Math.round(k)}k`);
+                        } else {
+                          label = Math.round(val).toString();
+                        }
+                      }
+                      return (
                       <div key={pct} style={{ fontSize:8, color:"#cbd5e1", textAlign:"right", lineHeight:1, paddingRight:4,
                                               fontFamily:"'DM Mono',monospace" }}>
-                        {maxRunTotal > 0 ? (maxRunTotal * pct >= 1000
-                          ? `${Math.round(maxRunTotal * pct / 1000)}k`
-                          : Math.round(maxRunTotal * pct).toString()) : ""}
+                        {label}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                   {/* Scrollable bar area — auto-scrolls to newest (rightmost) bar */}
                   <div ref={el => { if (el) scrollRefs.current[clan] = el; }}
