@@ -1655,7 +1655,14 @@ const PlayerDetail = ({ player, onBack }) => {
 
       {/* Event history */}
       <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-        {EVENT_TYPES.map(ev => {
+        {(() => {
+          // Filter and order EVENT_TYPES using event_config for this player's clan
+          const cfg = (window._appData?.eventConfig || []).filter(r => r.clan === player.clan && r.active && r.show_on_player_card);
+          if (cfg.length === 0) return EVENT_TYPES; // fallback: show all if config not loaded
+          return cfg
+            .map(c => EVENT_TYPES.find(e => e.id === c.id))
+            .filter(Boolean);
+        })().map(ev => {
           const scores  = getPlayerEventScores(player.id, player.clan, ev.id);
           const hasData = scores.length > 0;
           const shown   = scores.slice(0, 3);
@@ -7001,7 +7008,10 @@ function App() {
             .gte("date", _breakdownCutoff)
             .order("date", { ascending: false });
           window._appData.dailyClanRewards = rewardRows || [];
-          console.log("[DailyPlayerEpic] total rows:", allEpicRows.length, "| reward rows:", (rewardRows||[]).length);
+          // Fetch event_config so player card respects show_on_player_card toggles
+          const { data: evCfg } = await db.from("event_config").select("id, clan, display_name, show_on_player_card, active, display_order").order("display_order");
+          window._appData.eventConfig = evCfg || [];
+          console.log("[DailyPlayerEpic] total rows:", allEpicRows.length, "| reward rows:", (rewardRows||[]).length, "| event_config:", (evCfg||[]).length);
           setDataVersion(function(v){ return v + 1; });
         } catch(e) { console.error("[DailyPlayerEpic] threw:", e); }
       })();
