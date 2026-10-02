@@ -3353,6 +3353,74 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
   );
 };
 
+// ─── DAILY REWARDS CARD ───────────────────────────────────────────────────────
+const DailyRewardsCard = ({ clansToShow = ["69R","69S"] }) => {
+  const rows   = window._appData?.dailyClanRewards || [];
+  const fmtNum = n => {
+    const v = Number(n) || 0;
+    if (v >= 1_000_000) return (v / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
+    if (v >= 1_000)     return (v / 1_000).toFixed(1).replace(/\.0$/, "") + "k";
+    return v.toLocaleString();
+  };
+  const FIELDS = [
+    { key:"tar_epic",      label:"Tar Epic",  color:"#7c3aed" },
+    { key:"gold",          label:"Gold",      color:"#d97706" },
+    { key:"silver",        label:"Silver",    color:"#64748b" },
+  ];
+
+  if (rows.length === 0) return (
+    <div style={{ textAlign:"center", padding:"12px 0", color:"#94a3b8", fontSize:13 }}>No reward data yet</div>
+  );
+
+  // Last 7 distinct dates
+  const dates = [...new Set(rows.map(r => r.date))].slice(0, 7);
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+      {clansToShow.map(clan => {
+        const clanRows = rows.filter(r => r.clan === clan);
+        if (clanRows.length === 0) return null;
+        const byDate = {};
+        clanRows.forEach(r => { byDate[r.date] = r; });
+        return (
+          <div key={clan} style={{ backgroundColor:"#fff", borderRadius:12, padding:"12px 14px",
+                                   boxShadow:"0 1px 4px rgba(0,0,0,0.07),0 0 0 1px rgba(0,0,0,0.04)" }}>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontWeight:800, color:CLAN_COLORS[clan]||"#1e293b",
+                          fontSize:14, marginBottom:10 }}>{clan}</div>
+            {/* Header row */}
+            <div style={{ display:"grid", gridTemplateColumns:"80px repeat(3, 1fr)", gap:4, marginBottom:4 }}>
+              <div/>
+              {FIELDS.map(f => (
+                <div key={f.key} style={{ fontSize:9, fontWeight:700, color:f.color,
+                                          textTransform:"uppercase", letterSpacing:"0.05em", textAlign:"center" }}>
+                  {f.label}
+                </div>
+              ))}
+            </div>
+            {dates.map(date => {
+              const r = byDate[date];
+              if (!r) return null;
+              const label = new Date(date + "T12:00:00Z").toLocaleDateString("en-GB", { day:"numeric", month:"short" });
+              return (
+                <div key={date} style={{ display:"grid", gridTemplateColumns:"80px repeat(3, 1fr)", gap:4,
+                                         alignItems:"center", padding:"5px 0", borderTop:"1px solid #f1f5f9" }}>
+                  <div style={{ fontSize:10, color:"#94a3b8", fontFamily:"'DM Mono',monospace", fontWeight:600 }}>{label}</div>
+                  {FIELDS.map(f => (
+                    <div key={f.key} style={{ textAlign:"center", fontSize:11, fontWeight:700,
+                                              color:"#1e293b", fontFamily:"'DM Mono',monospace" }}>
+                      {fmtNum(r[f.key])}
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 // ─── TRENDS SCREEN ────────────────────────────────────────────────────────────
 const TrendsScreen = () => {
   const { role, clan: sessionClan } = useSession();
@@ -3576,6 +3644,12 @@ const TrendsScreen = () => {
             <div style={{ marginBottom:20 }}>
               <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Epic Squad Events · Last 18 Days</div>
               <EpicSquadChart clansToShow={clansToShow}/>
+            </div>
+
+            {/* Daily Chest Rewards — gold, silver, tar epic per clan */}
+            <div style={{ marginBottom:20 }}>
+              <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Daily Chest Rewards · Last 7 Days</div>
+              <DailyRewardsCard clansToShow={clansToShow}/>
             </div>
           </>
         );
@@ -6444,7 +6518,14 @@ function App() {
           window._appData.dailyPlayerEpic = allEpicRows;
           const cfgRes = await db.from("config").select("value").eq("key", "eventDisplayNames").single();
           window._appData.eventDisplayNames = cfgRes?.data?.value || {};
-          console.log("[DailyPlayerEpic] total rows:", allEpicRows.length);
+          // Also fetch daily clan rewards (gold, silver, tar) — last 30 days, tiny result set
+          const { data: rewardRows } = await db
+            .from("daily_clan_rewards")
+            .select("date, clan, gold, silver, tar_epic, tar_rare, tar_common, chests_opened")
+            .gte("date", _breakdownCutoff)
+            .order("date", { ascending: false });
+          window._appData.dailyClanRewards = rewardRows || [];
+          console.log("[DailyPlayerEpic] total rows:", allEpicRows.length, "| reward rows:", (rewardRows||[]).length);
           setDataVersion(function(v){ return v + 1; });
         } catch(e) { console.error("[DailyPlayerEpic] threw:", e); }
       })();
