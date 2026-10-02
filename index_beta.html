@@ -2986,6 +2986,13 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
   const [drillPlayersLoad, setDrillPlayersLoad] = useState(false);
   const scrollRefs = React.useRef({});
 
+  // Auto-scroll each clan's bar area to the newest (rightmost) bar whenever data changes
+  React.useEffect(() => {
+    Object.values(scrollRefs.current).forEach(el => {
+      if (el) el.scrollLeft = el.scrollWidth;
+    });
+  });
+
   // Drilldown players: computed synchronously from in-memory byDay data (no Supabase query needed)
   React.useEffect(() => {
     if (!drilldown) { setDrillPlayers([]); return; }
@@ -3002,8 +3009,8 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
 
   // Build everything from daily_player_epic — one source of truth
   const allRows = window._appData?.dailyPlayerEpic || [];
-  const displayNames = window._appData?.eventDisplayNames || {};
-  const rawToDisplay = (raw) => raw ? (displayNames[raw] || raw) : null;
+  // Use raw CT event names directly — no display name mapping for now
+  const rawToDisplay = (raw) => raw || null;
 
   // colorMap: all unique display-name event types seen in the data
   const allEventNames = [...new Set(
@@ -3117,7 +3124,7 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                     ))}
                   </div>
                   {/* Scrollable bar area — auto-scrolls to newest (rightmost) bar */}
-                  <div ref={el => { if (el) { scrollRefs.current[clan] = el; el.scrollLeft = el.scrollWidth; } }}
+                  <div ref={el => { if (el) scrollRefs.current[clan] = el; }}
                        style={{ flex:1, overflowX:"auto", position:"relative" }}>
                     <div style={{ position:"absolute", top:0, left:0, right:0, height:BAR_H, pointerEvents:"none", zIndex:0 }}>
                       {[0, 0.25, 0.5, 0.75, 1].map(pct => (
