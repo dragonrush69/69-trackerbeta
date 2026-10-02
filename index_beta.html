@@ -3706,14 +3706,59 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
 };
 
 // ─── CHEST TYPE COMPARISON CHART ─────────────────────────────────────────────
+// Chest yield per source — gold / silver / tar per chest opened
+const ChestYieldCard = ({ clansToShow = ["69R","69S"] }) => {
+  const rows = window._appData?.chestYield || [];
+  if (rows.length === 0) return null;
+
+  const fmtK = n => {
+    const v = Number(n) || 0;
+    if (v >= 1_000_000) return (v/1_000_000).toFixed(1) + "M";
+    if (v >= 1_000)     return (v/1_000).toFixed(0) + "k";
+    return v.toLocaleString();
+  };
+
+  return (
+    <div style={{ marginBottom:12 }}>
+      {clansToShow.map(clan => {
+        const clanRows = rows
+          .filter(r => r.clan === clan && Number(r.total_chests) >= 50)
+          .sort((a, b) => Number(b.total_chests) - Number(a.total_chests));
+        if (clanRows.length === 0) return null;
+        return (
+          <div key={clan} style={{ backgroundColor:"#fff", borderRadius:12, padding:"12px 14px", marginBottom:8,
+                                   boxShadow:"0 1px 4px rgba(0,0,0,0.07),0 0 0 1px rgba(0,0,0,0.04)" }}>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontWeight:800, color:CLAN_COLORS[clan]||"#1e293b", fontSize:14, marginBottom:10 }}>{clan}</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr auto auto auto", gap:"4px 10px", alignItems:"center" }}>
+              {/* Header */}
+              <div style={{ fontSize:9, color:"#94a3b8", fontWeight:700, textTransform:"uppercase" }}>Source</div>
+              <div style={{ fontSize:9, color:"#d97706", fontWeight:700, textAlign:"right" }}>Gold/chest</div>
+              <div style={{ fontSize:9, color:"#3b82f6", fontWeight:700, textAlign:"right" }}>Silver/chest</div>
+              <div style={{ fontSize:9, color:"#7c3aed", fontWeight:700, textAlign:"right" }}>Tar/chest</div>
+              {clanRows.map(r => (
+                <React.Fragment key={r.chest_source}>
+                  <div style={{ fontSize:10, color:"#475569", fontWeight:600, paddingTop:2 }}>{r.chest_source}</div>
+                  <div style={{ fontSize:10, color:"#d97706", fontFamily:"'DM Mono',monospace", textAlign:"right" }}>{fmtK(r.gold_per_chest)}</div>
+                  <div style={{ fontSize:10, color:"#3b82f6", fontFamily:"'DM Mono',monospace", textAlign:"right" }}>{fmtK(r.silver_per_chest)}</div>
+                  <div style={{ fontSize:10, color:"#7c3aed", fontFamily:"'DM Mono',monospace", textAlign:"right" }}>{fmtK(r.tar_per_chest)}</div>
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 // Compares gold / silver / tar_epic earned per day: Epic Squad vs Epic Crypt
 const ChestTypeComparisonChart = ({ clansToShow = ["69R","69S"] }) => {
-  const [metric, setMetric] = useState("silver"); // gold | silver | tar_epic
+  const [metric, setMetric] = useState("gold"); // gold | silver | tar_epic
   const rows = window._appData?.chestTypeRewards || [];
 
   const METRICS = [
-    { key:"silver",   label:"Silver",   color:{ "Epic Squad":"#3b82f6", "Epic Crypt":"#93c5fd" } },
     { key:"gold",     label:"Gold",     color:{ "Epic Squad":"#d97706", "Epic Crypt":"#fcd34d" } },
+    { key:"silver",   label:"Silver",   color:{ "Epic Squad":"#3b82f6", "Epic Crypt":"#93c5fd" } },
     { key:"tar_epic", label:"Tar Epic", color:{ "Epic Squad":"#7c3aed", "Epic Crypt":"#c4b5fd" } },
   ];
   const currentMetric = METRICS.find(m => m.key === metric);
@@ -4034,7 +4079,13 @@ const TrendsScreen = () => {
               })}
             </div>
 
-            {/* Epic Squad vs Epic Crypt reward comparison — first */}
+            {/* Chest yield per source — gold/silver/tar per chest */}
+            <div style={{ marginBottom:20 }}>
+              <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Epic Squad · Chest Yield</div>
+              <ChestYieldCard clansToShow={clansToShow}/>
+            </div>
+
+            {/* Epic Squad vs Epic Crypt reward comparison */}
             <div style={{ marginBottom:20 }}>
               <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Epic Squad vs Epic Crypt · Rewards</div>
               <ChestTypeComparisonChart clansToShow={clansToShow}/>
@@ -7484,7 +7535,14 @@ function App() {
             .gte("date", _breakdownCutoff)
             .order("date", { ascending: false });
           window._appData.chestTypeRewards = chestTypeRows || [];
-          console.log("[DailyPlayerEpic] total rows:", allEpicRows.length, "| reward rows:", (rewardRows||[]).length, "| chest type rows:", (chestTypeRows||[]).length);
+
+          // Fetch chest yield per source (live view — no date filter needed)
+          const { data: yieldRows } = await db
+            .from("chest_yield_by_source")
+            .select("clan, chest_source, total_chests, gold_per_chest, silver_per_chest, tar_per_chest");
+          window._appData.chestYield = yieldRows || [];
+
+          console.log("[DailyPlayerEpic] total rows:", allEpicRows.length, "| reward rows:", (rewardRows||[]).length, "| chest type rows:", (chestTypeRows||[]).length, "| yield rows:", (yieldRows||[]).length);
           setDataVersion(function(v){ return v + 1; });
         } catch(e) { console.error("[DailyPlayerEpic] threw:", e); }
       })();
