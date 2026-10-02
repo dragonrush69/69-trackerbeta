@@ -310,7 +310,7 @@ async function loadFromSheets() {
       { data: levelRequests },
       { data: rotationLog },
       { data: fragmentDists },
-      { data: arcaneChestRows },
+      { data: arcaneEpicRows },
       { data: olympusChestRows },
     ] = await Promise.all([
       db.from("players").select("*"),
@@ -325,8 +325,10 @@ async function loadFromSheets() {
       db.from("level_requests").select("*").order("date", { ascending: false }),
       db.from("rotation_log").select("*").order("date", { ascending: false }),
       db.from("fragment_distributions").select("*").order("date", { ascending: false }),
-      // Omens chests: Arcane Chest from Epic Arcanomancer Squad (2 days during Omens event)
-      db.from("chests").select("player_id, clan, generated_at, quantity").eq("chest_source", "Epic Arcanomancer Squad"),
+      // Omens chests: per-player Arcanomancer totals from daily_player_epic (90-day window)
+      db.from("daily_player_epic").select("date, clan, player_id, chests")
+        .ilike("event_name", "%arcanomancer%")
+        .gte("date", new Date(Date.now() - 90*24*60*60*1000).toISOString().slice(0,10)),
       // Olympus chests: Chimera (Day 1) + Basilisk (Day 2) + Briareus (Day 5) — summed per player per event
       db.from("chests").select("player_id, clan, generated_at, quantity").in("chest_source", ["Epic Chimera Squad", "Epic Basilisk squad", "Epic Briareus Squad"]),
     ]);
@@ -382,15 +384,27 @@ async function loadFromSheets() {
       // ── Omens: fully automated from tournament_entries + Arcane chests
       // Essence  = "Dark Omens" tournament points per player
       // Damage   = "Remnants Of Dread" points, matched to nearest Dark Omens date (±5 days)
-      // Chests   = Epic Arcanomancer Squad chest count within ±10 days of Dark Omens date
-      const arcaneChestMap   = buildEventChestMap(arcaneChestRows, darkOmensEntries, "tournament_date");
-      const omensEventDates  = [...new Set((darkOmensEntries || []).map(r => r.tournament_date))];
+      // Chests   = Arcanomancer rows from daily_player_epic, matched within ±10 days of Dark Omens date
+      const arcaneChestMap = {};
+      const _TEN_DAYS_MS = 10 * 24 * 3600 * 1000;
+      const _omensEventDates = [...new Set((darkOmensEntries || []).map(r => r.tournament_date))];
+      (arcaneEpicRows || []).forEach(row => {
+        if (!row.player_id || !row.date) return;
+        const rowTime = new Date(row.date).getTime();
+        for (const evDate of _omensEventDates) {
+          if (Math.abs(rowTime - new Date(evDate).getTime()) <= _TEN_DAYS_MS) {
+            const key = row.clan + "||" + evDate + "||" + row.player_id;
+            arcaneChestMap[key] = (arcaneChestMap[key] || 0) + (row.chests || 0);
+            break;
+          }
+        }
+      });
       const dreadLookup      = {};
       (remnantsEntries || []).forEach(r => {
         const pid = r.player_id ?? nameToId[r.player_name?.trim().toLowerCase()];
         if (!pid) return;
         const rTime = new Date(r.tournament_date).getTime();
-        for (const evDate of omensEventDates) {
+        for (const evDate of _omensEventDates) {
           if (Math.abs(rTime - new Date(evDate).getTime()) <= 5 * 86400000) {
             const key = r.clan + "||" + evDate + "||" + pid;
             dreadLookup[key] = (dreadLookup[key] || 0) + Number(r.points || 0);
