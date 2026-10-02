@@ -2996,28 +2996,35 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
 
     setDrillPlayersLoad(true);
     db.from("daily_player_epic")
-      .select("player_id, player_name, event_name, chests")
+      .select("date, player_id, player_name, event_name, chests")
       .eq("clan", clan)
       .in("event_name", rawNames)
       .gte("date", run.startDay)
       .lte("date", run.endDay)
       .then(({ data }) => {
-        const totals = {};
+        // Group by date → player, accumulating per-event chests
+        const byDate = {};
         (data || []).forEach(r => {
-          if (!totals[r.player_id]) totals[r.player_id] = { name: r.player_name || r.player_id, total: 0 };
-          totals[r.player_id].total += r.chests;
+          if (!byDate[r.date]) byDate[r.date] = {};
+          if (!byDate[r.date][r.player_id]) byDate[r.date][r.player_id] = { name: r.player_name || r.player_id, byEvent: {} };
+          byDate[r.date][r.player_id].byEvent[r.event_name] = (byDate[r.date][r.player_id].byEvent[r.event_name] || 0) + r.chests;
         });
-        let sorted = Object.values(totals)
-          .filter(p => p.total > 0)
-          .sort((a, b) => b.total - a.total)
-          .slice(0, 10);
 
-        // Fallback: if daily_player_epic has no data yet, use weekly epic_squad_scores approximation
-        if (sorted.length === 0) {
+        let result = Object.keys(byDate).sort().map(date => {
+          const players = Object.values(byDate[date])
+            .map(p => ({ ...p, total: Object.values(p.byEvent).reduce((s, v) => s + v, 0) }))
+            .filter(p => p.total > 0)
+            .sort((a, b) => b.total - a.total)
+            .slice(0, 10);
+          return { date, players };
+        });
+
+        // Fallback: daily_player_epic empty → use weekly epic_squad_scores
+        if (result.length === 0 || result.every(d => d.players.length === 0)) {
           const epicScores = (window._appData?.scores || {})[clan + "_epic_chests"] || [];
-          const players = window._appData?.players || [];
+          const allPlayers = window._appData?.players || [];
           const idToName = {};
-          players.forEach(p => { if (p.id) idToName[String(p.id)] = p.name; });
+          allPlayers.forEach(p => { if (p.id) idToName[String(p.id)] = p.name; });
           const runStart = new Date(run.startDay + "T12:00:00Z").getTime();
           const runEnd   = new Date(run.endDay   + "T12:00:00Z").getTime();
           const WEEK_MS  = 7 * 24 * 60 * 60 * 1000;
@@ -3031,14 +3038,15 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
               });
             }
           });
-          sorted = Object.entries(weekTotals)
-            .map(([pid, total]) => ({ name: idToName[pid] || pid, total }))
+          const weekPlayers = Object.entries(weekTotals)
+            .map(([pid, total]) => ({ name: idToName[pid] || pid, total, byEvent: {} }))
             .filter(p => p.total > 0)
             .sort((a, b) => b.total - a.total)
             .slice(0, 10);
+          result = [{ date: run.startDay, players: weekPlayers }];
         }
 
-        setDrillPlayers(sorted);
+        setDrillPlayers(result);
         setDrillPlayersLoad(false);
       });
   }, [drilldown]);
@@ -3272,36 +3280,68 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                   <div style={{ marginTop:16, fontSize:12, color:"#94a3b8" }}>Loading players…</div>
                 )}
                 {!drillPlayersLoad && drillPlayers.length > 0 && (() => {
-                  const maxTotal = drillPlayers[0].total;
+                  // Assign colors to each sub-event type (for stacked bars)
+                  const allSubEvents = [...new Set(
+                    drillPlayers.flatMap(d => d.players.flatMap(p => Object.keys(p.byEvent || {})))
+                  )];
+                  const SUB_PALETTE = [color, "#7c3aed", "#2563eb", "#d97706", "#dc2626", "#0891b2"];
+                  const subColors = {};
+                  allSubEvents.forEach((ev, i) => { subColors[ev] = SUB_PALETTE[i % SUB_PALETTE.length]; });
+
                   return (
                     <div style={{ marginTop:18 }}>
                       <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
                                     letterSpacing:"0.05em", marginBottom:10 }}>
                         Top Players
                       </div>
-                      <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-                        {drillPlayers.map((p, i) => (
-                          <div key={p.name} style={{ display:"flex", alignItems:"center", gap:8 }}>
-                            <div style={{ fontSize:10, color:"#cbd5e1", fontFamily:"'DM Mono',monospace",
-                                          width:14, textAlign:"right", flexShrink:0 }}>
-                              {i + 1}
-                            </div>
-                            <div style={{ flex:1 }}>
-                              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
-                                <span style={{ fontSize:12, fontWeight:600, color:"#1e293b" }}>{p.name}</span>
-                                <span style={{ fontSize:12, fontWeight:700, color:"#1e293b",
-                                               fontFamily:"'DM Mono',monospace" }}>
-                                  {p.total.toLocaleString()}
-                                </span>
+                      {drillPlayers.map(({ date, players }) => {
+                        if (players.length === 0) return null;
+                        const dayMax = players[0].total;
+                        return (
+                          <div key={date} style={{ marginBottom:14 }}>
+                            {drillPlayers.length > 1 && (
+                              <div style={{ fontSize:11, color:"#94a3b8", fontFamily:"'DM Mono',monospace",
+                                            fontWeight:600, marginBottom:6 }}>
+                                {formatDay(date)}
                               </div>
-                              <div style={{ height:4, borderRadius:2, backgroundColor:"#f1f5f9", overflow:"hidden" }}>
-                                <div style={{ height:"100%", borderRadius:2, backgroundColor:color,
-                                               width:`${(p.total / maxTotal) * 100}%` }}/>
-                              </div>
+                            )}
+                            <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
+                              {players.map((p, i) => {
+                                const subEntries = Object.entries(p.byEvent || {});
+                                return (
+                                  <div key={p.name} style={{ display:"flex", alignItems:"center", gap:8 }}>
+                                    <div style={{ fontSize:10, color:"#cbd5e1", fontFamily:"'DM Mono',monospace",
+                                                  width:14, textAlign:"right", flexShrink:0 }}>
+                                      {i + 1}
+                                    </div>
+                                    <div style={{ flex:1 }}>
+                                      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
+                                        <span style={{ fontSize:12, fontWeight:600, color:"#1e293b" }}>{p.name}</span>
+                                        <span style={{ fontSize:12, fontWeight:700, color:"#1e293b",
+                                                       fontFamily:"'DM Mono',monospace" }}>
+                                          {p.total.toLocaleString()}
+                                        </span>
+                                      </div>
+                                      <div style={{ height:4, borderRadius:2, backgroundColor:"#f1f5f9",
+                                                    overflow:"hidden", display:"flex" }}>
+                                        {subEntries.length > 1
+                                          ? subEntries.map(([evName, evChests]) => (
+                                              <div key={evName} style={{ height:"100%",
+                                                backgroundColor: subColors[evName] || color,
+                                                width:`${(evChests / dayMax) * 100}%` }}/>
+                                            ))
+                                          : <div style={{ height:"100%", borderRadius:2, backgroundColor:color,
+                                                          width:`${(p.total / dayMax) * 100}%` }}/>
+                                        }
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
-                        ))}
-                      </div>
+                        );
+                      })}
                     </div>
                   );
                 })()}
