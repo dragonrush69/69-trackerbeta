@@ -2988,11 +2988,13 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
   const rows = (window._appData?.dailyBreakdown || [])
     .filter(r => r.chest_type === "epic squad");
 
-  // Extract unambiguous event name from text[] — null if missing or multi-event
+  // Extract unambiguous event name from text[], applying display name overrides
+  const displayNames = window._appData?.eventDisplayNames || {};
   const getEventName = (r) => {
     if (!r.event_name) return null;
-    if (Array.isArray(r.event_name) && r.event_name.length === 1) return r.event_name[0];
-    return null;
+    const raw = Array.isArray(r.event_name) && r.event_name.length === 1 ? r.event_name[0] : null;
+    if (!raw) return null;
+    return displayNames[raw] || raw;
   };
 
   const allEventNames = [...new Set(rows.map(getEventName).filter(Boolean))].sort();
@@ -3144,11 +3146,6 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                         <span style={{ fontSize:10, color:"#475569", fontWeight:600 }}>{name}</span>
                       </div>
                     ))}
-                    <div style={{ display:"flex", alignItems:"center", gap:5, background:"#f8fafc",
-                                  border:"1px solid #e2e8f0", borderRadius:7, padding:"3px 8px 3px 6px" }}>
-                      <div style={{ width:10, height:10, borderRadius:2, backgroundColor:"#e2e8f0", flexShrink:0 }}/>
-                      <span style={{ fontSize:10, color:"#94a3b8", fontWeight:600 }}>Unknown / multi-event</span>
-                    </div>
                   </div>
                 )}
               </>
@@ -6276,17 +6273,21 @@ function App() {
       }
       setLoadError(false);
       window._appData = data;
-      // Load daily chest breakdown (last 30 days) — powers the Epic Squad events chart
+      // Load daily chest breakdown (last 30 days) + event display names config in parallel
       const _breakdownCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
       console.log("[DailyBreakdown] fetching from", _breakdownCutoff);
-      db.from("daily_chest_breakdown").select("date, clan, chest_type, total_chests, event_name")
-        .gte("date", _breakdownCutoff).order("date", { ascending: true }).limit(5000)
-        .then(function(res) {
+      Promise.all([
+        db.from("daily_chest_breakdown").select("date, clan, chest_type, total_chests, event_name")
+          .gte("date", _breakdownCutoff).order("date", { ascending: true }).limit(5000),
+        db.from("config").select("value").eq("key", "eventDisplayNames").single(),
+      ]).then(function(results) {
+          var res = results[0]; var cfgRes = results[1];
           var dbd = res.data; var dbdErr = res.error;
           if (dbdErr) console.warn("[DailyBreakdown] fetch error:", dbdErr);
           window._appData.dailyBreakdown = dbd || [];
+          window._appData.eventDisplayNames = cfgRes?.data?.value || {};
           var _epicRows = (dbd || []).filter(function(r){ return r.chest_type === "epic squad"; });
-          console.log("[DailyBreakdown] rows:", (dbd||[]).length, "| epic squad rows:", _epicRows.length, "| sample:", _epicRows[0] ? JSON.stringify(_epicRows[0]) : "none");
+          console.log("[DailyBreakdown] rows:", (dbd||[]).length, "| epic squad rows:", _epicRows.length, "| eventDisplayNames:", JSON.stringify(window._appData.eventDisplayNames));
           setDataVersion(function(v){ return v + 1; });
         })
         .catch(function(e){ console.error("[DailyBreakdown] threw:", e); });
