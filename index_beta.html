@@ -1624,7 +1624,8 @@ const ManualEventCard = ({ cfg, player }) => {
         }),
       });
       const data = await res.json();
-      if (!data.ok) { setErr(data.error || "Couldn't read screenshot."); setProcessing(false); return; }
+      console.log("[ManualEventCard] API response:", JSON.stringify(data));
+      if (!data.ok) { setErr(data.error || data.message || `Server error: ${JSON.stringify(data)}`); setProcessing(false); return; }
       setExtracted(data);
     } catch(e) { setErr("Something went wrong. Please try again."); }
     setProcessing(false);
