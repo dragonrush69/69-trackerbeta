@@ -312,6 +312,7 @@ async function loadFromSheets() {
       { data: fragmentDists },
       { data: arcaneEpicRows },
       { data: olympusEpicRows },
+      { data: eventConfigRows },
     ] = await Promise.all([
       db.from("players").select("*"),
       db.from("config").select("*"),
@@ -333,6 +334,8 @@ async function loadFromSheets() {
       db.from("daily_player_epic").select("date, clan, player_id, chests")
         .or("event_name.ilike.%chimera%,event_name.ilike.%basilisk%,event_name.ilike.%briareus%")
         .gte("date", new Date(Date.now() - 90*24*60*60*1000).toISOString().slice(0,10)),
+      // Event config — drives player card visibility
+      db.from("event_config").select("id, clan, display_name, show_on_player_card, active, display_order").order("display_order"),
     ]);
 
     // Fetch epic squad event breakdown (per event, per day — from chests table via matview)
@@ -492,6 +495,7 @@ async function loadFromSheets() {
       ctAliases:   config.ctAliases   || {},
       ctIgnored:   config.ctIgnored   || {},
       epicSquadEvents: epicSquadEvents || [],
+      eventConfig:     eventConfigRows || [],
     };
   } catch (err) {
     console.warn("Supabase load failed:", err);
@@ -7008,10 +7012,7 @@ function App() {
             .gte("date", _breakdownCutoff)
             .order("date", { ascending: false });
           window._appData.dailyClanRewards = rewardRows || [];
-          // Fetch event_config so player card respects show_on_player_card toggles
-          const { data: evCfg } = await db.from("event_config").select("id, clan, display_name, show_on_player_card, active, display_order").order("display_order");
-          window._appData.eventConfig = evCfg || [];
-          console.log("[DailyPlayerEpic] total rows:", allEpicRows.length, "| reward rows:", (rewardRows||[]).length, "| event_config:", (evCfg||[]).length);
+          console.log("[DailyPlayerEpic] total rows:", allEpicRows.length, "| reward rows:", (rewardRows||[]).length);
           setDataVersion(function(v){ return v + 1; });
         } catch(e) { console.error("[DailyPlayerEpic] threw:", e); }
       })();
