@@ -3067,13 +3067,8 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
     );
   }
 
-  // DEBUG strip — shows raw fetch info so we can diagnose date range issues
-  const _dates = allRows.map(r => r.date).sort();
-  const _debugInfo = `${allRows.length} rows · ${_dates[0]} → ${_dates[_dates.length-1]} · events: ${allEventNames.join(", ")||"none"}`;
-
   return (
     <div>
-      <div style={{ fontSize:10, color:"#94a3b8", marginBottom:8, fontFamily:"'DM Mono',monospace", wordBreak:"break-all" }}>{_debugInfo}</div>
       {/* Event filter pills */}
       {allEventNames.length > 0 && (
         <div style={{ display:"flex", flexWrap:"wrap", gap:"5px 8px", marginBottom:12 }}>
@@ -3100,11 +3095,10 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
 
       {clansToShow.map(clan => {
         const allRuns = buildRuns(clan);
-        // Cap to last 21 days so old off-screen bars don't distort the Y-axis scale
-        const _cap21 = new Date(Date.now() - 21 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-        const recentRuns = allRuns.filter(r => r.endDay >= _cap21);
+        // Show last 6 days that have data; filter pill can further narrow
+        const recentRuns = allRuns.slice(-6);
         const filteredRuns = filterEvent
-          ? recentRuns.filter(r => r.eventName === filterEvent)
+          ? allRuns.filter(r => r.eventName === filterEvent)  // filter pill shows full history
           : recentRuns;
         const maxRunTotal = Math.max(1, ...filteredRuns.map(r => r.runTotal));
         return (
