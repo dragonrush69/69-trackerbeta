@@ -2986,116 +2986,57 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
   const [drillPlayersLoad, setDrillPlayersLoad] = useState(false);
   const scrollRefs = React.useRef({});
 
-  // When drilldown opens, fetch exact per-player data from daily_player_epic
+  // Drilldown players: computed synchronously from in-memory byDay data (no Supabase query needed)
   React.useEffect(() => {
     if (!drilldown) { setDrillPlayers([]); return; }
     const { run, clan } = drilldown;
-    // Use the raw CT sub-type name stored on the run — no reverse-map needed
-    const rawNames = run.rawEventName ? [run.rawEventName] : [];
-    if (rawNames.length === 0) { setDrillPlayers([]); return; }
-
-    setDrillPlayersLoad(true);
-    db.from("daily_player_epic")
-      .select("date, player_id, player_name, event_name, chests")
-      .eq("clan", clan)
-      .in("event_name", rawNames)
-      .gte("date", run.startDay)
-      .lte("date", run.endDay)
-      .then(({ data }) => {
-        // Group by date → player, accumulating per-event chests
-        const byDate = {};
-        (data || []).forEach(r => {
-          if (!byDate[r.date]) byDate[r.date] = {};
-          if (!byDate[r.date][r.player_id]) byDate[r.date][r.player_id] = { name: r.player_name || r.player_id, byEvent: {} };
-          byDate[r.date][r.player_id].byEvent[r.event_name] = (byDate[r.date][r.player_id].byEvent[r.event_name] || 0) + r.chests;
-        });
-
-        let result = Object.keys(byDate).sort().map(date => {
-          const players = Object.values(byDate[date])
-            .map(p => ({ ...p, total: Object.values(p.byEvent).reduce((s, v) => s + v, 0) }))
-            .filter(p => p.total > 0)
-            .sort((a, b) => b.total - a.total)
-            .slice(0, 10);
-          return { date, players };
-        });
-
-        // Fallback: daily_player_epic empty → use weekly epic_squad_scores
-        if (result.length === 0 || result.every(d => d.players.length === 0)) {
-          const epicScores = (window._appData?.scores || {})[clan + "_epic_chests"] || [];
-          const allPlayers = window._appData?.players || [];
-          const idToName = {};
-          allPlayers.forEach(p => { if (p.id) idToName[String(p.id)] = p.name; });
-          const runStart = new Date(run.startDay + "T12:00:00Z").getTime();
-          const runEnd   = new Date(run.endDay   + "T12:00:00Z").getTime();
-          const WEEK_MS  = 7 * 24 * 60 * 60 * 1000;
-          const weekTotals = {};
-          epicScores.forEach(entry => {
-            if (entry.clan !== clan) return;
-            const wStart = new Date(entry.weekStart + "T17:00:00Z").getTime();
-            if (wStart <= runEnd && (wStart + WEEK_MS) > runStart) {
-              Object.entries(entry.scores || {}).forEach(([pid, s]) => {
-                weekTotals[pid] = (weekTotals[pid] || 0) + (s.score || 0);
-              });
-            }
-          });
-          const weekPlayers = Object.entries(weekTotals)
-            .map(([pid, total]) => ({ name: idToName[pid] || pid, total, byEvent: {} }))
-            .filter(p => p.total > 0)
-            .sort((a, b) => b.total - a.total)
-            .slice(0, 10);
-          result = [{ date: run.startDay, players: weekPlayers }];
-        }
-
-        setDrillPlayers(result);
-        setDrillPlayersLoad(false);
-      });
+    const dayData = byDay[clan]?.[run.startDay];
+    if (!dayData) { setDrillPlayers([]); return; }
+    const players = Object.values(dayData.players)
+      .map(p => ({ ...p, total: Object.values(p.byEvent).reduce((s, v) => s + v, 0) }))
+      .filter(p => p.total > 0)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 10);
+    setDrillPlayers([{ date: run.startDay, players }]);
   }, [drilldown]);
 
-  // Pull epic squad rows from daily_chest_breakdown
-  const rows = (window._appData?.dailyBreakdown || [])
-    .filter(r => r.chest_type === "epic squad");
-
-  // Extract unambiguous event name from text[], applying display name overrides
+  // Build everything from daily_player_epic — one source of truth
+  const allRows = window._appData?.dailyPlayerEpic || [];
   const displayNames = window._appData?.eventDisplayNames || {};
-  const getEventName = (r) => {
-    if (!r.event_name) return null;
-    const raw = Array.isArray(r.event_name) && r.event_name.length === 1 ? r.event_name[0] : null;
-    if (!raw) return null;
-    return displayNames[raw] || raw;
-  };
+  const rawToDisplay = (raw) => raw ? (displayNames[raw] || raw) : null;
 
-  const allEventNames = [...new Set(rows.map(getEventName).filter(Boolean))].sort();
+  // colorMap: all unique display-name event types seen in the data
+  const allEventNames = [...new Set(
+    allRows.map(r => rawToDisplay(r.event_name)).filter(Boolean)
+  )].sort();
   const colorMap = {};
   allEventNames.forEach((name, i) => { colorMap[name] = EPIC_PALETTE[i % EPIC_PALETTE.length]; });
 
-  // Build clan → date → { total, eventName }
+  // Build clan → date → { total, subEvents: {displayName→chests}, players: {pid→{name,byEvent}} }
   const byDay = {};
   clansToShow.forEach(c => { byDay[c] = {}; });
-  rows.forEach(r => {
+  allRows.forEach(r => {
     if (!byDay[r.clan]) return;
-    const rawEventName = Array.isArray(r.event_name) && r.event_name.length === 1 ? r.event_name[0] : null;
-    byDay[r.clan][r.date] = { total: Number(r.total_chests) || 0, eventName: getEventName(r), rawEventName };
+    const dn = rawToDisplay(r.event_name);
+    if (!dn) return;
+    if (!byDay[r.clan][r.date]) byDay[r.clan][r.date] = { total:0, subEvents:{}, players:{} };
+    const day = byDay[r.clan][r.date];
+    day.total += r.chests;
+    day.subEvents[dn] = (day.subEvents[dn] || 0) + r.chests;
+    if (!day.players[r.player_id]) day.players[r.player_id] = { name: r.player_name || r.player_id, byEvent:{} };
+    day.players[r.player_id].byEvent[dn] = (day.players[r.player_id].byEvent[dn] || 0) + r.chests;
   });
 
-  // Build runs: consecutive days with same eventName merged into one bar.
-  // Unknown days (eventName === null) are never merged — each shows as its own bar.
+  // One bar per day — no merging
   const buildRuns = (clan) => {
-    const days = Object.keys(byDay[clan] || {}).sort();
-    const runs = [];
-    let cur = null;
-    days.forEach(day => {
-      const { total, eventName, rawEventName } = byDay[clan][day] || {};
-      if (!total) return;
-      if (cur && cur.eventName !== null && cur.eventName === eventName) {
-        cur.endDay = day;
-        cur.days.push(day);
-        cur.runTotal += total;
-      } else {
-        cur = { eventName, rawEventName, startDay:day, endDay:day, days:[day], runTotal:total };
-        runs.push(cur);
-      }
-    });
-    return runs;
+    return Object.keys(byDay[clan] || {}).sort()
+      .filter(day => (byDay[clan][day]?.total || 0) > 0)
+      .map(day => {
+        const { total, subEvents } = byDay[clan][day];
+        // dominant event = the sub-event with most chests
+        const dominant = Object.entries(subEvents).sort((a,b) => b[1]-a[1])[0]?.[0] ?? null;
+        return { eventName:dominant, rawEventName:null, subEvents, startDay:day, endDay:day, days:[day], runTotal:total };
+      });
   };
 
   const formatDay = d => new Date(d + "T12:00:00Z").toLocaleDateString("en-GB", { day:"numeric", month:"short" });
@@ -3106,7 +3047,7 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
   const BAR_H = 110;
   const BAR_W = 44;
 
-  if (rows.length === 0) return (
+  if (allRows.length === 0) return (
     <div style={{ textAlign:"center", padding:"20px 0", color:"#94a3b8", fontSize:13 }}>No Epic Squad data yet</div>
   );
 
@@ -3183,7 +3124,10 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                                   minWidth: filteredRuns.length * (BAR_W + 6) }}>
                       {filteredRuns.map(run => {
                         const barPct = run.runTotal / maxRunTotal;
-                        const color = run.eventName ? (colorMap[run.eventName] || "#94a3b8") : "#e2e8f0";
+                        const subEntries = Object.entries(run.subEvents || {})
+                          .filter(([, v]) => v > 0)
+                          .sort((a, b) => b[1] - a[1]);
+                        const fallbackColor = run.eventName ? (colorMap[run.eventName] || "#94a3b8") : "#e2e8f0";
                         return (
                           <div key={run.startDay} onClick={() => setDrilldown({ run, clan })}
                             style={{ flex:`0 0 ${BAR_W}px`, display:"flex", flexDirection:"column", alignItems:"center", cursor:"pointer" }}>
@@ -3193,12 +3137,27 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                             </div>
                             <div style={{ width:BAR_W, height:BAR_H, display:"flex", flexDirection:"column",
                                           justifyContent:"flex-end", overflow:"hidden", borderRadius:"4px 4px 0 0" }}>
-                              <div style={{ width:"100%", height:`${barPct*100}%`, backgroundColor:color,
-                                            borderRadius:"4px 4px 0 0", minHeight:3 }}/>
+                              {subEntries.length > 1
+                                ? /* Stacked segments — each proportional to its share of total bar height */
+                                  <div style={{ width:"100%", height:`${barPct*100}%`, display:"flex",
+                                                flexDirection:"column", justifyContent:"flex-end", minHeight:3 }}>
+                                    {subEntries.map(([evName, evChests], si) => (
+                                      <div key={evName} style={{
+                                        width:"100%",
+                                        height:`${(evChests / run.runTotal) * 100}%`,
+                                        backgroundColor: colorMap[evName] || "#94a3b8",
+                                        borderRadius: si === 0 ? "4px 4px 0 0" : 0,
+                                        minHeight:1
+                                      }}/>
+                                    ))}
+                                  </div>
+                                : <div style={{ width:"100%", height:`${barPct*100}%`, backgroundColor:fallbackColor,
+                                                borderRadius:"4px 4px 0 0", minHeight:3 }}/>
+                              }
                             </div>
                             <div style={{ marginTop:4, fontSize:9, textAlign:"center", lineHeight:1.3,
                                           color:"#475569", fontWeight:700, whiteSpace:"nowrap" }}>
-                              {formatRun(run)}
+                              {formatDay(run.startDay)}
                             </div>
                           </div>
                         );
@@ -3276,10 +3235,7 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                 </div>
 
                 {/* Top players — exact per-event data from daily_player_epic */}
-                {drillPlayersLoad && (
-                  <div style={{ marginTop:16, fontSize:12, color:"#94a3b8" }}>Loading players…</div>
-                )}
-                {!drillPlayersLoad && drillPlayers.length > 0 && (() => {
+                {drillPlayers.length > 0 && (() => {
                   // Assign colors to each sub-event type (for stacked bars)
                   const allSubEvents = [...new Set(
                     drillPlayers.flatMap(d => d.players.flatMap(p => Object.keys(p.byEvent || {})))
@@ -6415,21 +6371,19 @@ function App() {
       }
       setLoadError(false);
       window._appData = data;
-      // Load daily chest breakdown (last 30 days) + event display names config in parallel
+      // Load daily_player_epic (last 30 days) + event display names config in parallel
       const _breakdownCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-      console.log("[DailyBreakdown] fetching from", _breakdownCutoff);
+      console.log("[DailyPlayerEpic] fetching from", _breakdownCutoff);
       Promise.all([
-        db.from("daily_chest_breakdown").select("date, clan, chest_type, total_chests, event_name")
-          .gte("date", _breakdownCutoff).order("date", { ascending: true }).limit(5000),
+        db.from("daily_player_epic").select("date, clan, player_id, player_name, event_name, chests")
+          .gte("date", _breakdownCutoff).order("date", { ascending: true }).limit(10000),
         db.from("config").select("value").eq("key", "eventDisplayNames").single(),
       ]).then(function(results) {
           var res = results[0]; var cfgRes = results[1];
-          var dbd = res.data; var dbdErr = res.error;
-          if (dbdErr) console.warn("[DailyBreakdown] fetch error:", dbdErr);
-          window._appData.dailyBreakdown = dbd || [];
+          if (res.error) console.warn("[DailyPlayerEpic] fetch error:", res.error);
+          window._appData.dailyPlayerEpic = res.data || [];
           window._appData.eventDisplayNames = cfgRes?.data?.value || {};
-          var _epicRows = (dbd || []).filter(function(r){ return r.chest_type === "epic squad"; });
-          console.log("[DailyBreakdown] rows:", (dbd||[]).length, "| epic squad rows:", _epicRows.length, "| eventDisplayNames:", JSON.stringify(window._appData.eventDisplayNames));
+          console.log("[DailyPlayerEpic] rows:", window._appData.dailyPlayerEpic.length, "| eventDisplayNames keys:", Object.keys(window._appData.eventDisplayNames).length);
           setDataVersion(function(v){ return v + 1; });
         })
         .catch(function(e){ console.error("[DailyBreakdown] threw:", e); });
