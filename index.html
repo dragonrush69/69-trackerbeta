@@ -2990,12 +2990,8 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
   React.useEffect(() => {
     if (!drilldown) { setDrillPlayers([]); return; }
     const { run, clan } = drilldown;
-    const displayNames = window._appData?.eventDisplayNames || {};
-    // Reverse-map display name → all raw CT sub-type keys that produce it
-    const rawNames = Object.entries(displayNames)
-      .filter(([, v]) => v === run.eventName)
-      .map(([k]) => k);
-    if (rawNames.length === 0 && run.eventName) rawNames.push(run.eventName);
+    // Use the raw CT sub-type name stored on the run — no reverse-map needed
+    const rawNames = run.rawEventName ? [run.rawEventName] : [];
     if (rawNames.length === 0) { setDrillPlayers([]); return; }
 
     setDrillPlayersLoad(true);
@@ -3011,10 +3007,37 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
           if (!totals[r.player_id]) totals[r.player_id] = { name: r.player_name || r.player_id, total: 0 };
           totals[r.player_id].total += r.chests;
         });
-        const sorted = Object.values(totals)
+        let sorted = Object.values(totals)
           .filter(p => p.total > 0)
           .sort((a, b) => b.total - a.total)
           .slice(0, 10);
+
+        // Fallback: if daily_player_epic has no data yet, use weekly epic_squad_scores approximation
+        if (sorted.length === 0) {
+          const epicScores = (window._appData?.scores || {})[clan + "_epic_chests"] || [];
+          const players = window._appData?.players || [];
+          const idToName = {};
+          players.forEach(p => { if (p.id) idToName[String(p.id)] = p.name; });
+          const runStart = new Date(run.startDay + "T12:00:00Z").getTime();
+          const runEnd   = new Date(run.endDay   + "T12:00:00Z").getTime();
+          const WEEK_MS  = 7 * 24 * 60 * 60 * 1000;
+          const weekTotals = {};
+          epicScores.forEach(entry => {
+            if (entry.clan !== clan) return;
+            const wStart = new Date(entry.weekStart + "T17:00:00Z").getTime();
+            if (wStart <= runEnd && (wStart + WEEK_MS) > runStart) {
+              Object.entries(entry.scores || {}).forEach(([pid, s]) => {
+                weekTotals[pid] = (weekTotals[pid] || 0) + (s.score || 0);
+              });
+            }
+          });
+          sorted = Object.entries(weekTotals)
+            .map(([pid, total]) => ({ name: idToName[pid] || pid, total }))
+            .filter(p => p.total > 0)
+            .sort((a, b) => b.total - a.total)
+            .slice(0, 10);
+        }
+
         setDrillPlayers(sorted);
         setDrillPlayersLoad(false);
       });
@@ -3042,7 +3065,8 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
   clansToShow.forEach(c => { byDay[c] = {}; });
   rows.forEach(r => {
     if (!byDay[r.clan]) return;
-    byDay[r.clan][r.date] = { total: Number(r.total_chests) || 0, eventName: getEventName(r) };
+    const rawEventName = Array.isArray(r.event_name) && r.event_name.length === 1 ? r.event_name[0] : null;
+    byDay[r.clan][r.date] = { total: Number(r.total_chests) || 0, eventName: getEventName(r), rawEventName };
   });
 
   // Build runs: consecutive days with same eventName merged into one bar.
@@ -3052,14 +3076,14 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
     const runs = [];
     let cur = null;
     days.forEach(day => {
-      const { total, eventName } = byDay[clan][day] || {};
+      const { total, eventName, rawEventName } = byDay[clan][day] || {};
       if (!total) return;
       if (cur && cur.eventName !== null && cur.eventName === eventName) {
         cur.endDay = day;
         cur.days.push(day);
         cur.runTotal += total;
       } else {
-        cur = { eventName, startDay:day, endDay:day, days:[day], runTotal:total };
+        cur = { eventName, rawEventName, startDay:day, endDay:day, days:[day], runTotal:total };
         runs.push(cur);
       }
     });
