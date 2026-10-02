@@ -2980,9 +2980,45 @@ const TierDrilldownSheet = ({ tier, clan, isAdmin, onClose }) => {
 const EPIC_PALETTE = ["#7c3aed","#2563eb","#16a34a","#d97706","#dc2626","#0891b2","#c026d3","#ea580c","#4f46e5","#059669","#be123c","#0d9488","#b45309","#1d4ed8","#15803d"];
 
 const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
-  const [drilldown,   setDrilldown]   = useState(null); // { run, clan }
-  const [filterEvent, setFilterEvent] = useState("");   // "" = all, or specific event name
+  const [drilldown,        setDrilldown]        = useState(null); // { run, clan }
+  const [filterEvent,      setFilterEvent]      = useState("");   // "" = all, or specific event name
+  const [drillPlayers,     setDrillPlayers]     = useState([]);
+  const [drillPlayersLoad, setDrillPlayersLoad] = useState(false);
   const scrollRefs = React.useRef({});
+
+  // When drilldown opens, fetch exact per-player data from daily_player_epic
+  React.useEffect(() => {
+    if (!drilldown) { setDrillPlayers([]); return; }
+    const { run, clan } = drilldown;
+    const displayNames = window._appData?.eventDisplayNames || {};
+    // Reverse-map display name → all raw CT sub-type keys that produce it
+    const rawNames = Object.entries(displayNames)
+      .filter(([, v]) => v === run.eventName)
+      .map(([k]) => k);
+    if (rawNames.length === 0 && run.eventName) rawNames.push(run.eventName);
+    if (rawNames.length === 0) { setDrillPlayers([]); return; }
+
+    setDrillPlayersLoad(true);
+    db.from("daily_player_epic")
+      .select("player_id, player_name, event_name, chests")
+      .eq("clan", clan)
+      .in("event_name", rawNames)
+      .gte("date", run.startDay)
+      .lte("date", run.endDay)
+      .then(({ data }) => {
+        const totals = {};
+        (data || []).forEach(r => {
+          if (!totals[r.player_id]) totals[r.player_id] = { name: r.player_name || r.player_id, total: 0 };
+          totals[r.player_id].total += r.chests;
+        });
+        const sorted = Object.values(totals)
+          .filter(p => p.total > 0)
+          .sort((a, b) => b.total - a.total)
+          .slice(0, 10);
+        setDrillPlayers(sorted);
+        setDrillPlayersLoad(false);
+      });
+  }, [drilldown]);
 
   // Pull epic squad rows from daily_chest_breakdown
   const rows = (window._appData?.dailyBreakdown || [])
@@ -3207,43 +3243,12 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                   })}
                 </div>
 
-                {/* Top players — built from weekly epic_squad_scores overlapping this run */}
-                {(() => {
-                  const epicScores = (window._appData?.scores || {})[clan + "_epic_chests"] || [];
-                  const players = window._appData?.players || [];
-                  const idToName = {};
-                  players.forEach(p => { if (p.id) idToName[String(p.id)] = p.name; });
-
-                  // Run date window (noon UTC anchors avoid DST edge cases)
-                  const runStart = new Date(run.startDay + "T12:00:00Z").getTime();
-                  const runEnd   = new Date(run.endDay   + "T12:00:00Z").getTime();
-                  const WEEK_MS  = 7 * 24 * 60 * 60 * 1000;
-
-                  // Collect scores from weeks that overlap this run
-                  const playerTotals = {};
-                  const weekLabels = new Set();
-                  epicScores.forEach(entry => {
-                    if (entry.clan !== clan) return;
-                    // Week runs Sun 17:00 UTC → next Sun 17:00 UTC
-                    const wStart = new Date(entry.weekStart + "T17:00:00Z").getTime();
-                    const wEnd   = wStart + WEEK_MS;
-                    if (wStart <= runEnd && wEnd > runStart) {
-                      weekLabels.add(entry.weekStart);
-                      Object.entries(entry.scores || {}).forEach(([pid, s]) => {
-                        playerTotals[pid] = (playerTotals[pid] || 0) + (s.score || 0);
-                      });
-                    }
-                  });
-
-                  const topPlayers = Object.entries(playerTotals)
-                    .map(([pid, total]) => ({ name: idToName[pid] || "Player " + pid, total }))
-                    .filter(p => p.total > 0)
-                    .sort((a, b) => b.total - a.total)
-                    .slice(0, 10);
-
-                  if (topPlayers.length === 0) return null;
-                  const maxTotal = topPlayers[0].total;
-
+                {/* Top players — exact per-event data from daily_player_epic */}
+                {drillPlayersLoad && (
+                  <div style={{ marginTop:16, fontSize:12, color:"#94a3b8" }}>Loading players…</div>
+                )}
+                {!drillPlayersLoad && drillPlayers.length > 0 && (() => {
+                  const maxTotal = drillPlayers[0].total;
                   return (
                     <div style={{ marginTop:18 }}>
                       <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
@@ -3251,7 +3256,7 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
                         Top Players
                       </div>
                       <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-                        {topPlayers.map((p, i) => (
+                        {drillPlayers.map((p, i) => (
                           <div key={p.name} style={{ display:"flex", alignItems:"center", gap:8 }}>
                             <div style={{ fontSize:10, color:"#cbd5e1", fontFamily:"'DM Mono',monospace",
                                           width:14, textAlign:"right", flexShrink:0 }}>
