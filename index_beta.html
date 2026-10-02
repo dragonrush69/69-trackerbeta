@@ -3047,9 +3047,14 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
   const BAR_H = 110;
   const BAR_W = 44;
 
-  if (allRows.length === 0) return (
-    <div style={{ textAlign:"center", padding:"20px 0", color:"#94a3b8", fontSize:13 }}>No Epic Squad data yet</div>
-  );
+  if (allRows.length === 0) {
+    const epicErr = window._appData?.dailyPlayerEpicError;
+    return (
+      <div style={{ textAlign:"center", padding:"20px 0", color: epicErr ? "#dc2626" : "#94a3b8", fontSize:13 }}>
+        {epicErr ? `⚠️ Load error: ${epicErr}` : "No Epic Squad data yet"}
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -6380,7 +6385,12 @@ function App() {
         db.from("config").select("value").eq("key", "eventDisplayNames").single(),
       ]).then(function(results) {
           var res = results[0]; var cfgRes = results[1];
-          if (res.error) console.warn("[DailyPlayerEpic] fetch error:", res.error);
+          if (res.error) {
+            console.warn("[DailyPlayerEpic] fetch error:", res.error);
+            window._appData.dailyPlayerEpicError = res.error.message || String(res.error);
+          } else {
+            window._appData.dailyPlayerEpicError = null;
+          }
           window._appData.dailyPlayerEpic = res.data || [];
           window._appData.eventDisplayNames = cfgRes?.data?.value || {};
           console.log("[DailyPlayerEpic] rows:", window._appData.dailyPlayerEpic.length, "| eventDisplayNames keys:", Object.keys(window._appData.eventDisplayNames).length);
