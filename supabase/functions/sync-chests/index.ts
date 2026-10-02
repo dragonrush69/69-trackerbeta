@@ -262,6 +262,54 @@ Deno.serve(async (req) => {
     const firstMemberId = firstClanId ? clanIdToMemberId[firstClanId] : undefined;
     const defToken      = firstMemberId ? await getCTToken(email, password, firstMemberId) : baseToken;
 
+    // ── probeAll mode: sample every CT endpoint RIGHT AFTER auth, then exit ───
+    if (isProbeAll) {
+      const probeClanTag   = CLANS_TO_SYNC[0];
+      const probeClanId    = tagToClanId[probeClanTag];
+      const probeMemberId  = probeClanId ? clanIdToMemberId[probeClanId] : undefined;
+      const probeClanToken = probeMemberId
+        ? await getCTToken(email, password, probeMemberId)
+        : defToken;
+
+      const probeEnd   = new Date();
+      const probeStart = new Date(probeEnd.getTime() - 7 * 24 * 3600 * 1000);
+      const ps = encodeURIComponent(probeStart.toISOString());
+      const pe = encodeURIComponent(probeEnd.toISOString());
+
+      const probes: Array<{ name: string; url: string; token: string }> = [
+        { name: "clans",               url: `${CT_API_BASE}/clans`,                                                                  token: baseToken      },
+        { name: "members",             url: `${CT_API_BASE}/members`,                                                                token: baseToken      },
+        { name: "definitions?size=2",  url: `${CT_API_BASE}/definitions?size=2`,                                                     token: defToken       },
+        { name: "chests?size=1",       url: `${CT_API_BASE}/chests?size=1&sort=generatedAt,desc&include=definition`,                 token: probeClanToken },
+        { name: "breakdown levels=1",  url: `${CT_API_BASE}/chests/breakdown?levels=1&start=${ps}&end=${pe}`,                        token: probeClanToken },
+        { name: "breakdown levels=2",  url: `${CT_API_BASE}/chests/breakdown?levels=2&start=${ps}&end=${pe}`,                        token: probeClanToken },
+        { name: "breakdown levels=3",  url: `${CT_API_BASE}/chests/breakdown?levels=3&start=${ps}&end=${pe}`,                        token: probeClanToken },
+        { name: "dashboards/summary",  url: `${CT_API_BASE}/dashboards/summary`,                                                     token: probeClanToken },
+        { name: "dashboards/members",  url: `${CT_API_BASE}/dashboards/members?size=3`,                                              token: probeClanToken },
+        { name: "tournaments?size=3",  url: `${CT_API_BASE}/tournaments?size=3`,                                                     token: probeClanToken },
+        { name: "tournaments/summary", url: `${CT_API_BASE}/tournaments/summary`,                                                    token: probeClanToken },
+        { name: "queue",               url: `${CT_API_BASE}/queue`,                                                                  token: defToken       },
+        { name: "penalties?size=2",    url: `${CT_API_BASE}/penalties?size=2`,                                                       token: probeClanToken },
+        { name: "events",              url: `${CT_API_BASE}/events`,                                                                 token: defToken       },
+        { name: "squads",              url: `${CT_API_BASE}/squads`,                                                                 token: defToken       },
+      ];
+
+      console.log(`PROBE: sampling ${probes.length} CT endpoints as clan ${probeClanTag} (${probeClanId})`);
+      for (const ep of probes) {
+        try {
+          const raw    = await ctGet(ep.url, ep.token);
+          const sample = JSON.stringify(raw).slice(0, 1200);
+          console.log(`PROBE [${ep.name}]: ${sample}`);
+        } catch (e: any) {
+          console.log(`PROBE [${ep.name}] ERROR: ${e.message}`);
+        }
+      }
+
+      return new Response(JSON.stringify({ probeAll: true, done: true, clan: probeClanTag }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
     // ── Fetch definitions from CT and upsert into definitions table ───────────
     {
       const defsRaw = await ctGet(`${CT_API_BASE}/definitions?size=500`, defToken);
@@ -369,54 +417,6 @@ Deno.serve(async (req) => {
       clanNameToPlayerId[p.clan][p.name.toLowerCase().trim()] = String(p.id);
     }
     console.log(`sync-chests: ${validPlayerIds.size} known players in ${CLANS_TO_SYNC.join(", ")}`);
-
-    // ── probeAll mode: sample every CT endpoint, then exit ───────────────────
-    if (isProbeAll) {
-      const probeClanTag  = CLANS_TO_SYNC[0];
-      const probeClanId   = tagToClanId[probeClanTag];
-      const probeMemberId = probeClanId ? clanIdToMemberId[probeClanId] : undefined;
-      const probeClanToken = probeMemberId
-        ? await getCTToken(email, password, probeMemberId)
-        : defToken;
-
-      const probeEnd   = new Date();
-      const probeStart = new Date(probeEnd.getTime() - 7 * 24 * 3600 * 1000);
-      const ps = encodeURIComponent(probeStart.toISOString());
-      const pe = encodeURIComponent(probeEnd.toISOString());
-
-      const probes: Array<{ name: string; url: string; token: string }> = [
-        { name: "clans",                   url: `${CT_API_BASE}/clans`,                                                                    token: baseToken        },
-        { name: "members",                 url: `${CT_API_BASE}/members`,                                                                  token: baseToken        },
-        { name: "definitions?size=2",      url: `${CT_API_BASE}/definitions?size=2`,                                                       token: defToken         },
-        { name: "chests?size=1",           url: `${CT_API_BASE}/chests?size=1&sort=generatedAt,desc&include=definition`,                   token: probeClanToken   },
-        { name: "breakdown levels=1",      url: `${CT_API_BASE}/chests/breakdown?levels=1&start=${ps}&end=${pe}`,                          token: probeClanToken   },
-        { name: "breakdown levels=2",      url: `${CT_API_BASE}/chests/breakdown?levels=2&start=${ps}&end=${pe}`,                          token: probeClanToken   },
-        { name: "breakdown levels=3",      url: `${CT_API_BASE}/chests/breakdown?levels=3&start=${ps}&end=${pe}`,                          token: probeClanToken   },
-        { name: "dashboards/summary",      url: `${CT_API_BASE}/dashboards/summary`,                                                       token: probeClanToken   },
-        { name: "dashboards/members",      url: `${CT_API_BASE}/dashboards/members?size=3`,                                                token: probeClanToken   },
-        { name: "tournaments?size=3",      url: `${CT_API_BASE}/tournaments?size=3`,                                                       token: probeClanToken   },
-        { name: "tournaments/summary",     url: `${CT_API_BASE}/tournaments/summary`,                                                      token: probeClanToken   },
-        { name: "queue",                   url: `${CT_API_BASE}/queue`,                                                                    token: defToken         },
-        { name: "penalties?size=2",        url: `${CT_API_BASE}/penalties?size=2`,                                                         token: probeClanToken   },
-        { name: "events",                  url: `${CT_API_BASE}/events`,                                                                   token: defToken         },
-        { name: "squads",                  url: `${CT_API_BASE}/squads`,                                                                   token: defToken         },
-      ];
-
-      console.log(`PROBE: sampling ${probes.length} CT endpoints as clan ${probeClanTag} (${probeClanId})`);
-      for (const ep of probes) {
-        try {
-          const raw    = await ctGet(ep.url, ep.token);
-          const sample = JSON.stringify(raw).slice(0, 1200);
-          console.log(`PROBE [${ep.name}]: ${sample}`);
-        } catch (e: any) {
-          console.log(`PROBE [${ep.name}] ERROR: ${e.message}`);
-        }
-      }
-
-      return new Response(JSON.stringify({ probeAll: true, done: true, clan: probeClanTag }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
 
     // ── Sync each clan ────────────────────────────────────────────────────────
     const results: Record<string, any> = {};
@@ -610,6 +610,7 @@ Deno.serve(async (req) => {
 
             // Pick dominant sub-type (most chests) per chest type as event_name
             // Stored as text[] to match existing column type and app expectations
+            // sub_events stores ALL sub-type totals for stacked chart rendering
             const dailyRows = Object.entries(typeTotals).map(([chestType, totalChests]) => {
               const subs = typeSubTotals[chestType] ?? {};
               const dominant = Object.entries(subs).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
@@ -619,6 +620,7 @@ Deno.serve(async (req) => {
                 chest_type:   chestType,
                 total_chests: totalChests,
                 event_name:   dominant ? [dominant] : null,
+                sub_events:   Object.keys(subs).length > 0 ? subs : null,
                 synced_at:    nowIso,
               };
             });
