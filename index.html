@@ -3690,6 +3690,120 @@ const EpicSquadChart = ({ clansToShow = ["69R","69S"] }) => {
   );
 };
 
+// ─── CHEST TYPE COMPARISON CHART ─────────────────────────────────────────────
+// Compares gold / silver / tar_epic earned per day: Epic Squad vs Epic Crypt
+const ChestTypeComparisonChart = ({ clansToShow = ["69R","69S"] }) => {
+  const [metric, setMetric] = useState("silver"); // gold | silver | tar_epic
+  const rows = window._appData?.chestTypeRewards || [];
+
+  const METRICS = [
+    { key:"silver",   label:"Silver",   color:{ "Epic Squad":"#3b82f6", "Epic Crypt":"#93c5fd" } },
+    { key:"gold",     label:"Gold",     color:{ "Epic Squad":"#d97706", "Epic Crypt":"#fcd34d" } },
+    { key:"tar_epic", label:"Tar Epic", color:{ "Epic Squad":"#7c3aed", "Epic Crypt":"#c4b5fd" } },
+  ];
+  const currentMetric = METRICS.find(m => m.key === metric);
+  const fmtNum = n => {
+    const v = Number(n) || 0;
+    if (v >= 1_000_000_000) return (v/1_000_000_000).toFixed(1) + "B";
+    if (v >= 1_000_000)     return (v/1_000_000).toFixed(1) + "M";
+    if (v >= 1_000)         return (v/1_000).toFixed(0) + "k";
+    return v.toLocaleString();
+  };
+
+  if (rows.length === 0) return (
+    <Card><p style={{ fontSize:13, color:"#cbd5e1", margin:0, fontStyle:"italic" }}>No chest type reward data yet</p></Card>
+  );
+
+  // Build per-clan data: date → { Epic Squad: val, Epic Crypt: val }
+  const buildData = (clan) => {
+    const byDate = {};
+    rows.filter(r => r.clan === clan).forEach(r => {
+      if (!byDate[r.date]) byDate[r.date] = {};
+      byDate[r.date][r.chest_type] = Number(r[metric]) || 0;
+    });
+    return Object.keys(byDate).sort().reverse().slice(0, 14).reverse()
+      .map(date => ({ date, squad: byDate[date]["Epic Squad"] || 0, crypt: byDate[date]["Epic Crypt"] || 0 }));
+  };
+
+  const BAR_W = 18;
+  const BAR_GAP = 4;
+  const GROUP_GAP = 10;
+  const BAR_H = 90;
+  const formatDate = d => new Date(d + "T12:00:00Z").toLocaleDateString("en-GB", { day:"numeric", month:"short" });
+
+  const renderClan = (clan) => {
+    const data = buildData(clan);
+    if (data.length === 0) return null;
+    const maxVal = Math.max(...data.flatMap(d => [d.squad, d.crypt]), 1);
+    const groupW = BAR_W * 2 + BAR_GAP + GROUP_GAP;
+    const totalW = data.length * groupW;
+
+    return (
+      <Card key={clan} style={{ marginBottom:12 }}>
+        <div style={{ fontSize:13, fontWeight:800, color:"#1e293b", marginBottom:10 }}>
+          {clan} — Epic Squad vs Epic Crypt · {currentMetric.label}
+        </div>
+        <div style={{ overflowX:"auto" }}>
+          <div style={{ display:"flex", alignItems:"flex-end", gap:0, minWidth:totalW, paddingBottom:28, position:"relative" }}>
+            {data.map((d, i) => {
+              const squadH = Math.max(2, Math.round((d.squad / maxVal) * BAR_H));
+              const cryptH = Math.max(2, Math.round((d.crypt / maxVal) * BAR_H));
+              return (
+                <div key={d.date} style={{ display:"flex", flexDirection:"column", alignItems:"center", width:groupW, flexShrink:0 }}>
+                  {/* Bars */}
+                  <div style={{ display:"flex", alignItems:"flex-end", gap:BAR_GAP, marginBottom:4 }}>
+                    {/* Epic Squad bar */}
+                    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:1 }}>
+                      {d.squad > 0 && <span style={{ fontSize:7, color:"#64748b", fontFamily:"'DM Mono',monospace", whiteSpace:"nowrap" }}>{fmtNum(d.squad)}</span>}
+                      <div style={{ width:BAR_W, height:squadH, backgroundColor:currentMetric.color["Epic Squad"], borderRadius:"3px 3px 0 0" }}/>
+                    </div>
+                    {/* Epic Crypt bar */}
+                    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:1 }}>
+                      {d.crypt > 0 && <span style={{ fontSize:7, color:"#64748b", fontFamily:"'DM Mono',monospace", whiteSpace:"nowrap" }}>{fmtNum(d.crypt)}</span>}
+                      <div style={{ width:BAR_W, height:cryptH, backgroundColor:currentMetric.color["Epic Crypt"], borderRadius:"3px 3px 0 0" }}/>
+                    </div>
+                  </div>
+                  {/* Date label */}
+                  <div style={{ fontSize:8, color:"#94a3b8", textAlign:"center", marginTop:2, whiteSpace:"nowrap" }}>
+                    {formatDate(d.date)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        {/* Legend */}
+        <div style={{ display:"flex", gap:12, marginTop:4 }}>
+          {["Epic Squad","Epic Crypt"].map(t => (
+            <div key={t} style={{ display:"flex", alignItems:"center", gap:4 }}>
+              <div style={{ width:10, height:10, borderRadius:2, backgroundColor:currentMetric.color[t] }}/>
+              <span style={{ fontSize:10, color:"#64748b", fontWeight:600 }}>{t}</span>
+            </div>
+          ))}
+        </div>
+      </Card>
+    );
+  };
+
+  return (
+    <div>
+      {/* Metric toggle */}
+      <div style={{ display:"flex", gap:6, marginBottom:12 }}>
+        {METRICS.map(m => (
+          <button key={m.key} onClick={() => setMetric(m.key)}
+            style={{ padding:"5px 12px", borderRadius:8, border:"none", fontSize:11, fontWeight:700,
+                     cursor:"pointer",
+                     backgroundColor: metric === m.key ? "#1e293b" : "#f1f5f9",
+                     color:           metric === m.key ? "#fff"     : "#64748b" }}>
+            {m.label}
+          </button>
+        ))}
+      </div>
+      {clansToShow.map(clan => renderClan(clan))}
+    </div>
+  );
+};
+
 // ─── DAILY REWARDS CARD ───────────────────────────────────────────────────────
 const DailyRewardsCard = ({ clansToShow = ["69R","69S"] }) => {
   const rows   = window._appData?.dailyClanRewards || [];
@@ -3995,6 +4109,12 @@ const TrendsScreen = () => {
             <div style={{ marginBottom:20 }}>
               <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Epic Squad Events · Last 18 Days</div>
               <EpicSquadChart clansToShow={clansToShow}/>
+            </div>
+
+            {/* Epic Squad vs Epic Crypt reward comparison */}
+            <div style={{ marginBottom:20 }}>
+              <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Epic Squad vs Epic Crypt · Rewards</div>
+              <ChestTypeComparisonChart clansToShow={clansToShow}/>
             </div>
 
             {/* Daily Chest Rewards — gold, silver, tar epic per clan */}
@@ -7341,7 +7461,14 @@ function App() {
             .gte("date", _breakdownCutoff)
             .order("date", { ascending: false });
           window._appData.dailyClanRewards = rewardRows || [];
-          console.log("[DailyPlayerEpic] total rows:", allEpicRows.length, "| reward rows:", (rewardRows||[]).length);
+          // Fetch chest type comparison (Epic Squad vs Epic Crypt rewards)
+          const { data: chestTypeRows } = await db
+            .from("daily_chest_type_rewards")
+            .select("date, clan, chest_type, gold, silver, tar_epic")
+            .gte("date", _breakdownCutoff)
+            .order("date", { ascending: false });
+          window._appData.chestTypeRewards = chestTypeRows || [];
+          console.log("[DailyPlayerEpic] total rows:", allEpicRows.length, "| reward rows:", (rewardRows||[]).length, "| chest type rows:", (chestTypeRows||[]).length);
           setDataVersion(function(v){ return v + 1; });
         } catch(e) { console.error("[DailyPlayerEpic] threw:", e); }
       })();
